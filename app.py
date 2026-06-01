@@ -202,19 +202,36 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
 with st.sidebar:
     st.title("⚙️ Panel de Control")
 
-    with st.expander("🗺️ Interruptores de Capas y Fondos", expanded=True):
-        activar_catastro = st.checkbox("🏢 Activar capa de Catastro", value=False)
-        activar_siose = st.checkbox("🗺️ Activar capa de Usos del Suelo (SIOSE)", value=False)
-        activar_ambientales = st.checkbox("🌲 Activar Espacios Protegidos y Fauna Sensible", value=False)
-        activar_fluviales = st.checkbox("💧 Activar capa de Zonas Fluviales", value=False)
-        activar_transportes = st.checkbox("🛣️ Activar capa de Infraestructuras de Transporte", value=False)
-        st.write("---")
-        idx_fondo_defecto = 1 if activar_ambientales else 0
-        fondo_seleccionado = st.radio(
-            "Fondo del Mapa Base:",
-            ["OpenStreetMap (Color Tradicional)", "Fondo Gris Claro (Simplificado)", "Satélite (Esri World Imagery)", "Topográfico (OpenTopoMap)"],
-            index=idx_fondo_defecto
-        )
+    with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
+        st.markdown("**Leyenda de Usos del Suelo (SIOSE / Corine):**")
+        st.markdown("""
+        <div style="font-size: 13px; font-family: Arial, sans-serif; line-height: 1.4; margin-bottom: 15px;">
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Tejido urbano continuo (Residencial)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Tejido urbano discontinuo</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Zonas Industriales</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate / Fucsia:</b> Infraestructuras de Transporte</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa / Salmón:</b> Dotacional (Sanitario, Docente, Cultural)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Zonas Verdes Urbanas (Recreativo)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de Cultivo y Labor</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #00A600; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Bosques y Naturaleza (Fauna)</div>
+            <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("**Leyenda Ambiental (Red Natura 2000 y EEA):**")
+        st.markdown("""
+        <div style="font-size: 13px; font-family: Arial, sans-serif; line-height: 1.4; border: 1px solid #eee; padding: 10px; border-radius: 5px; background: #fff;">
+            <b>Red Natura 2000 (Fauna Sensible)</b><br>
+            <div style="display: flex; align-items: center; margin-bottom: 4px; margin-top: 4px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Rayado Azul:</b> Zonas LIC (Hábitats)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Rayado Rojo:</b> Zonas ZEPA (Aves)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 12px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Rayado Mixto:</b> LIC y ZEPA combinados</div>
+            <b>Espacios Naturales Protegidos (ENP)</b><br>
+            <div style="display: flex; align-items: center; margin-bottom: 4px; margin-top: 4px;"><div style="width: 15px; height: 15px; background: #9900FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Parques Nacionales / Reservas (IUCN I-II)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #2E8B57; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Parques Naturales (IUCN III-VI)</div>
+            <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #FF9900; margin-right: 8px; border: 1px solid #ccc;"></div><b>Naranja:</b> Otras Designaciones Ambientales</div>
+        </div>
+        """, unsafe_allow_html=True)
 
     with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
         st.markdown("**Leyenda de Usos del Suelo (SIOSE / Corine):**")

@@ -1,6 +1,6 @@
 streamlit==1.32.0
 folium==0.15.1
 streamlit-folium==0.18.0
-shapely
-pandas
-branca
+shapely==2.0.3
+pandas==2.0.3
+branca==0.7.1

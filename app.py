@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
+from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Visor Mapas de Ruido", layout="wide")
 
@@ -44,13 +45,32 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def safe_serialize(obj):
-    if hasattr(obj, 'coords'): return list(obj.coords)
+    if hasattr(obj, 'coords'):
+        return list(obj.coords)
     return str(obj)
 
-if "mis_dibujos" not in st.session_state: st.session_state["mis_dibujos"] = []
-if "map_version" not in st.session_state: st.session_state["map_version"] = 0
-if "map_center" not in st.session_state: st.session_state["map_center"] = [40.4410, -3.6908]
-if "map_zoom" not in st.session_state: st.session_state["map_zoom"] = 15
+if "mis_dibujos" not in st.session_state:
+    st.session_state["mis_dibujos"] = []
+if "map_version" not in st.session_state:
+    st.session_state["map_version"] = 0
+if "map_center" not in st.session_state:
+    st.session_state["map_center"] = [40.4410, -3.6908]
+if "map_zoom" not in st.session_state:
+    st.session_state["map_zoom"] = 15
+
+# FUNCIÓN DE ANCLAJE INTELIGENTE
+def anclar_al_elemento(feat):
+    try:
+        g_type = feat["geometry"]["type"]
+        c = feat["geometry"]["coordinates"]
+        if g_type == "Point":
+            st.session_state["map_center"] = [c[1], c[0]]
+        elif g_type == "LineString" and len(c) > 0:
+            st.session_state["map_center"] = [c[0][1], c[0][0]]
+        elif g_type == "Polygon" and len(c) > 0 and len(c[0]) > 0:
+            st.session_state["map_center"] = [c[0][0][1], c[0][0][0]]
+    except:
+        pass
 
 malla_fina_config = [
     {"min": 30, "color": "#00FF00"}, {"min": 35, "color": "#66B24D"},
@@ -63,8 +83,10 @@ malla_fina_config = [
 
 @st.cache_data
 def cargar_maquinas():
-    try: return pd.read_csv("maquinaria.csv")
-    except: return pd.DataFrame({"Nombre_Maquina": ["Máquina Genérica"], "dB_1m": [90.0]})
+    try:
+        return pd.read_csv("maquinaria.csv")
+    except:
+        return pd.DataFrame({"Nombre_Maquina": ["Máquina Genérica"], "dB_1m": [90.0]})
 
 df_maq = cargar_maquinas()
 lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
@@ -75,8 +97,10 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
     if "name" not in feature["properties"]:
         prefix = "Foco" if tipo == "Point" else "Pantalla" if tipo == "LineString" else "Población"
         feature["properties"]["name"] = f"{prefix} {idx+1}"
-    if tipo == "Point" and "maq" not in feature["properties"]: feature["properties"]["maq"] = {}
-    if tipo == "LineString" and "aten" not in feature["properties"]: feature["properties"]["aten"] = 15.0
+    if tipo == "Point" and "maq" not in feature["properties"]:
+        feature["properties"]["maq"] = {}
+    if tipo == "LineString" and "aten" not in feature["properties"]:
+        feature["properties"]["aten"] = 15.0
     if tipo == "Polygon" and "umbral" not in feature["properties"]:
         feature["properties"]["umbral"] = 65.0
         feature["properties"]["uso_nombre"] = "Residencial"
@@ -103,6 +127,7 @@ def parsear_kml_a_dibujos(kml_texto):
         for placemark in root.iter('Placemark'):
             name_tag = placemark.find('name')
             nombre = name_tag.text if name_tag is not None else "Elemento Importado"
+            
             pt = placemark.find('.//Point')
             if pt is not None:
                 coord_tag = pt.find('.//coordinates')
@@ -112,6 +137,7 @@ def parsear_kml_a_dibujos(kml_texto):
                         lon, lat = map(float, coords[0].split(',')[:2])
                         dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}}})
                         continue
+                        
             ls = placemark.find('.//LineString')
             if ls is not None:
                 coord_tag = ls.find('.//coordinates')
@@ -121,6 +147,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     if coords_list:
                         dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                         continue
+                        
             poly = placemark.find('.//Polygon')
             if poly is not None:
                 coord_tag = poly.find('.//coordinates')
@@ -129,6 +156,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
                     if coords_list:
                         dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial"}})
+                        continue
     except Exception as e:
         st.error(f"Error parseando KML interno: {e}")
     return dibujos
@@ -147,7 +175,8 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         rad = math.radians(angle)
         r_max_libre = radio_base
         if len(focos_all) > 1 and r_max_posible > radio_base:
-            low, high = radio_base, r_max_posible + 5
+            low = radio_base
+            high = r_max_posible + 5
             for _ in range(12):
                 mid = (low + high) / 2
                 d_lon = math.degrees(mid * math.cos(rad) / (r_earth * math.cos(math.radians(foco_lat))))
@@ -176,7 +205,9 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                 d_min_wall = distancia_haversine(foco_lat, foco_lon, pt_closest.y, pt_closest.x)
                 radio_aten = r_max_libre * (10 ** (-p["aten"] / 20))
                 if radio_aten <= d_min_wall: radio_final = min(radio_final, d_muro)
-                else: radio_final = min(radio_final, d_muro + (radio_aten - d_min_wall))
+                else:
+                    d_extra = radio_aten - d_min_wall
+                    radio_final = min(radio_final, d_muro + d_extra)
         d_lon_final = math.degrees(radio_final * math.cos(rad) / (r_earth * math.cos(math.radians(foco_lat))))
         d_lat_final = math.degrees(radio_final * math.sin(rad) / r_earth)
         coords.append([foco_lat + d_lat_final, foco_lon + d_lon_final])
@@ -185,7 +216,9 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
 def hex_to_kml_color(hex_color, alpha="60"):
     colores_basicos = {"green": "00ff00", "orange": "00a5ff", "red": "0000ff"}
     hex_clean = colores_basicos.get(hex_color.lower(), hex_color.replace("#", ""))
-    if len(hex_clean) == 6: return f"{alpha}{hex_clean[4:6]}{hex_clean[2:4]}{hex_clean[0:2]}"
+    if len(hex_clean) == 6:
+        r, g, b = hex_clean[0:2], hex_clean[2:4], hex_clean[4:6]
+        return f"{alpha}{b}{g}{r}"
     return f"{alpha}ffffff"
 
 def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
@@ -194,15 +227,42 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
         kml.append('<Folder><name>Mapas de Ondas de Ruido (Círculos)</name>')
         for iso in isofonas_list:
             kml_color = hex_to_kml_color(iso["color"], alpha="50")
-            kml.append(f'<Placemark><name>{iso["name"]}</name><Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>{kml_color}</color><width>1</width></LineStyle></Style>')
-            kml.append(f'<Polygon><outerBoundaryIs><LinearRing><coordinates>{" ".join([f"{lon},{lat},0" for lat, lon in iso["coords"]])} {iso["coords"][0][1]},{iso["coords"][0][0]},0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>')
+            kml.append('<Placemark>')
+            kml.append(f'<name>{iso["name"]}</name>')
+            kml.append(f'<Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>{kml_color}</color><width>1</width></LineStyle></Style>')
+            kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
+            coord_str = " ".join([f"{lon},{lat},0" for lat, lon in iso["coords"]])
+            coord_str += f" {iso['coords'][0][1]},{iso['coords'][0][0]},0"
+            kml.append(coord_str)
+            kml.append('</coordinates></LinearRing></outerBoundaryIs></Polygon>')
+            kml.append('</Placemark>')
         kml.append('</Folder>')
     for f in focos_list:
-        kml.append(f'<Placemark><name>{f["name"]}</name><description>Emisión: {f["emision"]:.1f} dB</description><Point><coordinates>{f["coords"][0]},{f["coords"][1]},0</coordinates></Point></Placemark>')
+        lon, lat = f["coords"]
+        kml.append('<Placemark>')
+        kml.append(f'<name>{f["name"]}</name>')
+        kml.append(f'<description>Foco Acústico\nEmisión: {f["emision"]:.1f} dB</description>')
+        kml.append(f'<Point><coordinates>{lon},{lat},0</coordinates></Point>')
+        kml.append('</Placemark>')
     for p in pantallas_list:
-        kml.append(f'<Placemark><name>{p["name"]}</name><description>Atenuación: {p["aten"]:.1f} dB</description><Style><LineStyle><color>ffffff00</color><width>6</width></LineStyle></Style><LineString><coordinates>{" ".join([f"{lon},{lat},0" for lon, lat in p["coords"]])}</coordinates></LineString></Placemark>')
+        kml.append('<Placemark>')
+        kml.append(f'<name>{p["name"]}</name>')
+        kml.append(f'<description>Pantalla Acústica\nAtenuación: {p["aten"]:.1f} dB</description>')
+        kml.append('<Style><LineStyle><color>ffffff00</color><width>6</width></LineStyle></Style>')
+        kml.append('<LineString><coordinates>')
+        kml.append(" ".join([f"{lon},{lat},0" for lon, lat in p["coords"]]))
+        kml.append('</coordinates></LineString>')
+        kml.append('</Placemark>')
     for pob in poblaciones_list:
-        kml.append(f'<Placemark><name>{pob["name"]}</name><description>Límite: {pob.get("umbral", 65.0)} dB</description><Style><PolyStyle><color>7f00ff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style><Polygon><outerBoundaryIs><LinearRing><coordinates>{" ".join([f"{lon},{lat},0" for lon, lat in pob["coords"]])} {pob["coords"][0][0]},{pob["coords"][0][1]},0</coordinates></LinearRing></outerBoundaryIs></Polygon></Placemark>')
+        kml.append('<Placemark>')
+        kml.append(f'<name>{pob["name"]}</name>')
+        kml.append(f'<description>Núcleo Receptor | Umbral: {pob.get("umbral", 65.0)} dB</description>')
+        kml.append('<Style><PolyStyle><color>7f00ff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style>')
+        kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
+        kml.append(" ".join([f"{lon},{lat},0" for lon, lat in pob["coords"]]))
+        kml.append(f' {pob["coords"][0][0]},{pob["coords"][0][1]},0')
+        kml.append('</coordinates></LinearRing></outerBoundaryIs></Polygon>')
+        kml.append('</Placemark>')
     kml.append('</Document></kml>')
     kmz_buffer = io.BytesIO()
     with zipfile.ZipFile(kmz_buffer, 'w', zipfile.ZIP_DEFLATED) as zf: zf.writestr('doc.kml', "\n".join(kml))
@@ -216,6 +276,7 @@ with st.sidebar:
         if st.session_state["mis_dibujos"]:
             json_proyecto = json.dumps(st.session_state["mis_dibujos"], indent=2, default=safe_serialize)
             st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
+        st.write("---")
         
         archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz, .kml)", type=["json", "kmz", "kml"])
         if archivo_cargado is not None:
@@ -223,11 +284,13 @@ with st.sidebar:
             if nombre_arch.endswith('.json'):
                 try:
                     datos = json.load(archivo_cargado)
-                    if st.button("Aplicar JSON", use_container_width=True):
+                    if st.button("Aplicar JSON Cargado", use_container_width=True):
                         st.session_state["mis_dibujos"] = datos
                         st.session_state["map_version"] += 1
                         st.rerun()
-                except Exception as e: st.error("Error al leer JSON.")
+                except Exception as e:
+                    st.error(f"Error al leer JSON: {e}")
+                    
             elif nombre_arch.endswith('.kmz') or nombre_arch.endswith('.kml'):
                 try:
                     file_bytes = archivo_cargado.getvalue()
@@ -235,7 +298,8 @@ with st.sidebar:
                     try:
                         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
                             kml_internos = [f for f in zf.namelist() if f.lower().endswith('.kml')]
-                            if kml_internos: kml_texto = zf.read(kml_internos[0]).decode('utf-8', errors='ignore')
+                            if kml_internos:
+                                kml_texto = zf.read(kml_internos[0]).decode('utf-8', errors='ignore')
                     except zipfile.BadZipFile:
                         kml_texto = file_bytes.decode('utf-8', errors='ignore')
 
@@ -243,20 +307,40 @@ with st.sidebar:
                         dibujos_kml = parsear_kml_a_dibujos(kml_texto)
                         if dibujos_kml:
                             st.success(f"Detectados {len(dibujos_kml)} elementos.")
-                            if st.button("Aplicar KMZ/KML", use_container_width=True):
+                            if st.button("Aplicar Archivo Cargado", use_container_width=True):
                                 st.session_state["mis_dibujos"] = dibujos_kml
                                 if dibujos_kml[0]["geometry"]["coordinates"]:
                                     c = dibujos_kml[0]["geometry"]["coordinates"]
-                                    if dibujos_kml[0]["geometry"]["type"] == "Point": st.session_state["map_center"] = [c[1], c[0]]
-                                    else: st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
+                                    if dibujos_kml[0]["geometry"]["type"] == "Point":
+                                        st.session_state["map_center"] = [c[1], c[0]]
+                                    else:
+                                        st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
                                 st.session_state["map_version"] += 1
                                 st.rerun()
-                        else: st.warning("No se encontraron geometrías en el archivo.")
-                except Exception as e: st.error("Error procesando archivo.")
+                        else:
+                            st.warning("No se encontraron geometrías válidas en el archivo.")
+                    else:
+                        st.error("El archivo está vacío o corrupto.")
+                except Exception as e:
+                    st.error(f"Error procesando archivo: {e}")
 
-    # LEYENDA ORIGINAL DEL SIOSE RECUPERADA EXACTAMENTE IGUAL QUE EN EL PRIMER DOCUMENTO
-    with st.expander("📚 Leyenda Usos del Suelo (SIOSE / ADIF)", expanded=False):
-        st.markdown("**Límites Legales de Ruido:**")
+    with st.expander("🗺️ Interruptores de Capas y Fondos", expanded=True):
+        activar_catastro = st.checkbox("🏢 Activar capa de Catastro", value=False)
+        activar_siose = st.checkbox("🗺️ Activar capa de Usos del Suelo (SIOSE)", value=False)
+        activar_ambientales = st.checkbox("🌲 Activar Espacios Protegidos y Fauna Sensible", value=False)
+        activar_fluviales = st.checkbox("💧 Activar capa de Zonas Fluviales", value=False)
+        activar_transportes = st.checkbox("🛣️ Activar capa de Infraestructuras de Transporte", value=False)
+        st.write("---")
+        idx_fondo_defecto = 1 if activar_ambientales else 0
+        fondo_seleccionado = st.radio(
+            "Fondo del Mapa Base:",
+            ["OpenStreetMap (Color Tradicional)", "Fondo Gris Claro (Simplificado)", "Satélite (Esri World Imagery)", "Topográfico (OpenTopoMap)"],
+            index=idx_fondo_defecto
+        )
+
+    # AQUÍ ESTÁ LA LEYENDA ORIGINAL SIOSE Y ADIF QUE HABÍAMOS PERDIDO
+    with st.expander("📚 Leyendas Capas Oficiales (SIOSE / ADIF)", expanded=False):
+        st.markdown("**Límites Legales de Ruido (España / ADIF):**")
         st.markdown("""
         <div style="font-size: 12px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.5;">
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Tejido urbano continuo (Residencial - 65 dB)</div>
@@ -271,16 +355,12 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    with st.expander("🗺️ Selector de Fondo Base", expanded=True):
-        st.info("💡 **Consejo:** Para encender o apagar las capas de Catastro, SIOSE o Natura 2000, utiliza el **icono de capas 📚 arriba a la derecha en el mapa**. Así no perderás tu posición al moverte.")
-        fondo_seleccionado = st.radio("Fondo Base Inicial:", ["OpenStreetMap", "Satélite (Esri World Imagery)"], index=0)
-
-    with st.expander("📜 Fondo de Isófonas Global", expanded=True):
+    with st.expander("📜 1. Fondo de Isófonas Global", expanded=True):
         tipo_malla = st.radio("Estilo de Visualización:", ["Malla Básica (Semáforo)", "Malla Fina (Intervalos 5dB)"])
         activar_umbral_global = st.checkbox("Mostrar línea de límite común voluntaria", value=True)
         umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
 
-    with st.expander("🏷️ Configuración de Elementos", expanded=True):
+    with st.expander("🏷️ 2. Configuración de Elementos", expanded=True):
         if not st.session_state["mis_dibujos"]: st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
         else:
             for idx, feature in enumerate(st.session_state["mis_dibujos"]):
@@ -289,21 +369,16 @@ with st.sidebar:
                 icono = "📍" if tipo == "Point" else "〰️" if tipo == "LineString" else "⬟"
                 col_tit, col_del = st.columns([5, 1])
                 with col_tit: st.markdown(f"**{icono} Elemento {idx+1} ({props['name']})**")
+                
                 with col_del:
                     if st.button("🗑️", key=f"borrar_elem_{idx}"):
                         st.session_state["mis_dibujos"].pop(idx)
+                        if st.session_state["mis_dibujos"]:
+                            anclar_al_elemento(st.session_state["mis_dibujos"][-1])
                         st.session_state["map_version"] += 1
                         st.rerun()
                 props["name"] = st.text_input(f"Nombre {icono}", value=props["name"], key=f"name_{idx}")
                 
-                # ANCLAJE INTELIGENTE: Si cambias un dato, el mapa se centra en ese elemento
-                def anclar_al_elemento(feat):
-                    g_type = feat["geometry"]["type"]
-                    c = feat["geometry"]["coordinates"]
-                    if g_type == "Point": st.session_state["map_center"] = [c[1], c[0]]
-                    elif g_type == "LineString": st.session_state["map_center"] = [c[0][1], c[0][0]]
-                    elif g_type == "Polygon": st.session_state["map_center"] = [c[0][0][1], c[0][0][0]]
-
                 if tipo == "Point":
                     for m, db in list(props["maq"].items()):
                         col_m, col_b = st.columns([3, 1])
@@ -322,14 +397,12 @@ with st.sidebar:
                         m_nom = maquina_sel
                         db_defecto = float(df_maq[df_maq['Nombre_Maquina'] == maquina_sel]['dB_1m'].values[0])
                         m_db = c2.number_input("dB (1m):", value=db_defecto, step=1.0, key=f"m_db_{idx}")
-                    
                     if st.button("➕ Asignar", key=f"btn_assign_{idx}") and m_nom:
                         props["maq"][m_nom] = m_db
                         anclar_al_elemento(feature)
                         st.session_state["map_version"] += 1
                         st.rerun()
                     st.write(f"Potencia Foco: **{sumar_decibelios(props['maq']):.1f} dB**")
-                
                 elif tipo == "LineString":
                     nuevo_aten = st.number_input("Atenuación Muro (dB):", value=float(props["aten"]), step=1.0, key=f"aten_{idx}")
                     if nuevo_aten != props["aten"]:
@@ -337,7 +410,6 @@ with st.sidebar:
                         anclar_al_elemento(feature)
                         st.session_state["map_version"] += 1
                         st.rerun()
-                
                 elif tipo == "Polygon":
                     usos_pob = {
                         "Sanitario, docente y cultural (Dotacional)": 60.0,
@@ -350,17 +422,14 @@ with st.sidebar:
                     }
                     if "uso_nombre" not in props: props["uso_nombre"] = "Residencial"
                     if "umbral" not in props: props["umbral"] = 65.0
-                    
                     idx_uso = list(usos_pob.keys()).index(props["uso_nombre"]) if props["uso_nombre"] in usos_pob else 1
                     sel_uso = st.selectbox("Categoría de Área Acústica:", list(usos_pob.keys()), index=idx_uso, key=f"uso_{idx}")
-                    
                     if sel_uso != props["uso_nombre"]:
                         props["uso_nombre"] = sel_uso
                         props["umbral"] = usos_pob[sel_uso]
                         anclar_al_elemento(feature)
                         st.session_state["map_version"] += 1
                         st.rerun()
-                    
                     nuevo_umb = st.number_input("Límite Legal a aplicar (dB):", value=float(props["umbral"]), step=1.0, key=f"umb_{idx}")
                     if nuevo_umb != props["umbral"]:
                         props["umbral"] = nuevo_umb
@@ -368,6 +437,24 @@ with st.sidebar:
                         st.session_state["map_version"] += 1
                         st.rerun()
                 st.write("---")
+
+    with st.expander("📥 3. Exportación", expanded=True):
+        if st.session_state["mis_dibujos"]:
+            tmp_focos, tmp_pan, tmp_pob = [], [], []
+            for f in st.session_state["mis_dibujos"]:
+                t = f["geometry"]["type"]
+                if t == "Point": tmp_focos.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "emision": sumar_decibelios(f["properties"]["maq"])})
+                elif t == "LineString": tmp_pan.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "aten": f["properties"]["aten"]})
+                elif t == "Polygon": tmp_pob.append({"coords": f["geometry"]["coordinates"][0], "name": f["properties"]["name"], "umbral": f["properties"].get("umbral", 65.0)})
+            kmz_data = generar_kmz(tmp_focos, tmp_pan, tmp_pob, [])
+            st.download_button("⬇️ Descargar KMZ", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
+
+    with st.expander("🔗 4. Portales Oficiales", expanded=True):
+        st.markdown("""
+        * 🌲 [Espacios Protegidos y Red Natura (MITECO)](https://www.miteco.gob.es/es/biodiversidad/servicios/banco-datos-naturaleza/bdn-visores.html)
+        * 🏢 [Sede Electrónica del Catastro](https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx?buscar=S)
+        * 🗺️ [SIOSE Oficial](https://www.siose.es/)
+        """)
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state["mis_dibujos"] = []
@@ -382,9 +469,12 @@ for feature in st.session_state["mis_dibujos"]:
     tipo = feature["geometry"]["type"]
     coords = feature["geometry"]["coordinates"]
     props = feature["properties"]
-    if tipo == "Point": focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
-    elif tipo == "LineString": pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
-    elif tipo == "Polygon": poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0)})
+    if tipo == "Point":
+        focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
+    elif tipo == "LineString":
+        pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
+    elif tipo == "Polygon":
+        poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
 
 col1, col2, col3 = st.columns(3)
 col1.metric("📍 Focos Detectados", len(focos))
@@ -394,26 +484,44 @@ col3.metric("⬟ Zonas Evaluadas", len(poblaciones))
 centro = st.session_state["map_center"]
 zoom = st.session_state["map_zoom"]
 
-if fondo_seleccionado == "OpenStreetMap": m = folium.Map(location=centro, zoom_start=zoom, tiles="OpenStreetMap")
-else: m = folium.Map(location=centro, zoom_start=zoom, tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Esri")
+if fondo_seleccionado == "Fondo Gris Claro (Simplificado)":
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="cartodbpositron")
+elif fondo_seleccionado == "Satélite (Esri World Imagery)":
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Tiles &copy; Esri")
+elif fondo_seleccionado == "Topográfico (OpenTopoMap)":
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr="Map data: &copy; OpenStreetMap contributors | Style: OpenTopoMap")
+else:
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="OpenStreetMap")
 
-# CAPAS INCORPORADAS AL MAPA NATIVO
-folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
-folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ SIOSE", fmt="image/png", transparent=True, opacity=0.5, overlay=True, show=False).add_to(m)
-folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", name="🌲 CDDA", fmt="image/png", transparent=True, opacity=0.8, overlay=True, show=False).add_to(m)
-folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/Natura2000Sites/MapServer/WMSServer", layers="0,1,2,3", name="🌲 Natura 2000", fmt="image/png", transparent=True, opacity=1.0, overlay=True, show=False).add_to(m)
-
-Fullscreen(position='bottomleft').add_to(m)
+Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='kilometers', primary_area_unit='sqmeters').add_to(m)
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
-fg_isofonas = folium.FeatureGroup(name="🔊 Ondas de Ruido").add_to(m)
-fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones").add_to(m)
-fg_pantallas = folium.FeatureGroup(name="〰️ Pantallas").add_to(m)
-fg_focos = folium.FeatureGroup(name="📍 Focos").add_to(m)
+if activar_catastro:
+    folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, control=False).add_to(m)
+
+if activar_siose:
+    folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, control=False).add_to(m)
+
+if activar_ambientales:
+    folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", fmt="image/png", transparent=True, version="1.3.0", opacity=0.8, overlay=True, control=False).add_to(m)
+    folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/Natura2000Sites/MapServer/WMSServer", layers="0,1,2,3", fmt="image/png", transparent=True, version="1.3.0", opacity=1.0, overlay=True, control=False).add_to(m)
+
+if activar_fluviales:
+    folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/hidrografia", layers="HY.PhysicalWaters.Waterbodies", name="💧 Zonas Fluviales", fmt="image/png", transparent=True, opacity=0.6, overlay=True, control=False).add_to(m)
+
+if activar_transportes:
+    folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/transportes", layers="TN.RoadTransportNetwork.RoadLink", name="🛣️ Transportes", fmt="image/png", transparent=True, opacity=0.7, overlay=True, control=False).add_to(m)
+
+fg_isofonas = folium.FeatureGroup(name="🔊 Ondas de Ruido (Isófonas)").add_to(m)
+fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones Evaluadas").add_to(m)
+fg_pantallas = folium.FeatureGroup(name="〰️ Pantallas Acústicas").add_to(m)
+fg_focos = folium.FeatureGroup(name="📍 Focos de Maquinaria").add_to(m)
 
 pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
 focos_json = json.dumps(focos, default=safe_serialize)
+
+css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
 
 if tipo_malla == "Malla Fina (Intervalos 5dB)":
     for banda in malla_fina_config:
@@ -430,7 +538,7 @@ if tipo_malla == "Malla Fina (Intervalos 5dB)":
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=0.4, weight=1).add_to(fg_isofonas)
+                folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=0.4, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
 else:
     for umb, color, opacity, w in [(umbral_referencia - 20, "green", 0.1, 1), (umbral_referencia - 10, "orange", 0.2, 1), (umbral_referencia, "red", 0.3, 2)]:
         poligonos_banda = []
@@ -446,7 +554,7 @@ else:
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                folium.Polygon(locations=coords_folium, color=color, fill=True, fill_opacity=opacity, weight=w+1).add_to(fg_isofonas)
+                folium.Polygon(locations=coords_folium, color=color, fill=True, fill_opacity=opacity, weight=w+1, tooltip=f"Límite: {umb} dB").add_to(fg_isofonas)
 
 if activar_umbral_global:
     poligonos_limite = []
@@ -462,7 +570,7 @@ if activar_umbral_global:
         geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
         for geom in geoms:
             coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-            folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10").add_to(fg_isofonas)
+            folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10", tooltip=f"Límite Común Voluntario: {umbral_referencia} dB").add_to(fg_isofonas)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -494,70 +602,67 @@ for pob in poblaciones:
                 if shapely_poly.intersects(iso_poly):
                     supera_umbral = True
                     break
-    color_pob = "red" if supera_umbral else "green"
-    html = f'<div style="color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; text-align: center; white-space: nowrap;">{nombre}<br><span style="color: {"#ffcccc" if supera_umbral else "#ccffcc"}; font-size: 11px;">({"Incumple" if supera_umbral else f"{ruido_total:.1f} dB /"} {umbral_pob}dB)</span></div>'
+    if supera_umbral:
+        color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Incumple {umbral_pob}dB)</span></div>'
+    else:
+        color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({ruido_total:.1f} dB / {umbral_pob} dB)</span></div>'
     folium.Polygon(locations=[[lat, lon] for lon, lat in poly_coords], color=color_pob, fill=True, fill_opacity=0.4, weight=2).add_to(fg_poblaciones)
     if nombre: folium.Marker([c_lat, c_lon], icon=folium.DivIcon(html=html, icon_size=(250, 60), icon_anchor=(125, 30))).add_to(fg_poblaciones)
 
 for p in pantallas_data:
     pant_coord = p["coords"]
     nombre, aten = p["name"], p["aten"]
-    folium.PolyLine(locations=[[lat, lon] for lon, lat in pant_coord], color="black", weight=12, opacity=1.0).add_to(fg_pantallas)
-    folium.PolyLine(locations=[[lat, lon] for lon, lat in pant_coord], color="#00FFFF", weight=6, opacity=1.0).add_to(fg_pantallas)
+    texto_hover = f"〰️ Pantalla Acústica: {nombre} | Reducción: -{aten:.1f} dB"
+    folium.PolyLine(locations=[[lat, lon] for lon, lat in pant_coord], color="black", weight=12, opacity=1.0, tooltip=texto_hover).add_to(fg_pantallas)
+    folium.PolyLine(locations=[[lat, lon] for lon, lat in pant_coord], color="#00FFFF", weight=6, opacity=1.0, popup=f"{nombre}: {aten} dB", tooltip=texto_hover).add_to(fg_pantallas)
     if nombre:
-        folium.Marker([pant_coord[len(pant_coord)//2][1], pant_coord[len(pant_coord)//2][0]], icon=folium.DivIcon(html=f'<div style="color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; text-align: center; white-space: nowrap;">{nombre}<br>({aten:.1f} dB)</div>', icon_size=(150, 30), icon_anchor=(75, -10))).add_to(fg_pantallas)
+        folium.Marker([pant_coord[len(pant_coord)//2][1], pant_coord[len(pant_coord)//2][0]], icon=folium.DivIcon(html=f'<div style="{css_texto} text-align: center;">{nombre}<br>({aten:.1f} dB)</div>', icon_size=(150, 30), icon_anchor=(75, -10))).add_to(fg_pantallas)
 
 for f in focos:
     lon, lat = f["coords"]
     nombre, emision_foco = f["name"], f["emision"]
-    folium.Marker([lat, lon], icon=folium.Icon(color="black", icon="cog")).add_to(fg_focos)
+    folium.Marker([lat, lon], icon=folium.Icon(color="black", icon="cog"), tooltip=f"📍 Foco Emisor: {nombre} | Potencia: {emision_foco:.1f} dB").add_to(fg_focos)
     if nombre:
-        folium.Marker([lat, lon], icon=folium.DivIcon(html=f'<div style="color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;">{nombre}<br>({emision_foco:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
+        folium.Marker([lat, lon], icon=folium.DivIcon(html=f'<div style="{css_texto}">{nombre}<br>({emision_foco:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
 
-Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
+Draw(
+    export=False, 
+    draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False},
+    edit_options={'edit': False, 'remove': False}
+).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDAS HTML: HERRAMIENTAS, DECIBELIOS Y EEA CLAVADA A LA NORMATIVA
-m.get_root().html.add_child(folium.Element("""
-<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
-    <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
+leyendas_html = """
+{% macro html(this, kwargs) %}
+<div style="position: absolute; bottom: 20px; left: 20px; z-index: 9999; background-color: white; padding: 8px 15px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 13px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; display: flex; flex-direction: row; align-items: center; gap: 20px; box-sizing: border-box;">
+    <div style="font-weight: bold; color: #4B4B4D; border-right: 2px solid #eee; padding-right: 15px;">🛠️ Herramientas</div>
+    <div style="color: black;">〰️ <b>Línea:</b> Pantalla</div>
+    <div style="color: black;">⬟ <b>Polígono:</b> Población</div>
+    <div style="color: black;">📍 <b>Marcador:</b> Foco</div>
 </div>
-<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 240px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
-    <div>
-        <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles (dB)</div>
-        <div style="display: flex; flex-wrap: wrap;">
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#00FF00; border:1px solid #999;"></span> 30-35</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#66B24D; border:1px solid #999;"></span> 35-40</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#99CC33; border:1px solid #999;"></span> 40-45</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#D8F2A0; border:1px solid #999;"></span> 45-50</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFFF00; border:1px solid #999;"></span> 50-55</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFE6AA; border:1px solid #999;"></span> 55-60</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFAA33; border:1px solid #999;"></span> 60-65</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF3333; border:1px solid #999;"></span> 65-70</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#CC3333; border:1px solid #999;"></span> 70-75</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; border:1px solid #999;"></span> 75-80</div>
-            <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#295180; border:1px solid #999;"></span> > 80</div>
-        </div>
-    </div>
-    <div>
-        <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> LIC/ZEC (Hábitats)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #FF8888; margin-right: 5px;"></span> ZEPA (Aves)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #333; margin-right: 5px;"></span> LIC + ZEPA</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#7CFC00; border:1px solid #999; margin-right: 5px;"></span> Reserva Estricta (Ia)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Área Silvestre (Ib)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional (II)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural (III)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat (IV)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Protegido (V)</div>
-        <div style="display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Área Uso Sost. (VI)</div>
-    </div>
+<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background-color: white; padding: 10px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; max-width: 150px; box-sizing: border-box; overflow: hidden;">
+    <div style="font-weight: bold; margin-bottom: 6px; text-align: center; color: #4B4B4D; border-bottom: 1px solid #eee; padding-bottom: 4px;">Niveles (dB)</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #00FF00; margin-right: 8px; border: 1px solid #ccc;"></div>30 - 35</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #66B24D; margin-right: 8px; border: 1px solid #ccc;"></div>35 - 40</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #99CC33; margin-right: 8px; border: 1px solid #ccc;"></div>40 - 45</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #D8F2A0; margin-right: 8px; border: 1px solid #ccc;"></div>45 - 50</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFFF00; margin-right: 8px; border: 1px solid #ccc;"></div>50 - 55</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFE6AA; margin-right: 8px; border: 1px solid #ccc;"></div>55 - 60</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFAA33; margin-right: 8px; border: 1px solid #ccc;"></div>60 - 65</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FF3333; margin-right: 8px; border: 1px solid #ccc;"></div>65 - 70</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #CC3333; margin-right: 8px; border: 1px solid #ccc;"></div>70 - 75</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FF00FF; margin-right: 8px; border: 1px solid #ccc;"></div>75 - 80</div>
+    <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #295180; margin-right: 8px; border: 1px solid #ccc;"></div>> 80</div>
 </div>
-"""))
+{% endmacro %}
+"""
+macro = MacroElement()
+macro._template = Template(leyendas_html)
+m.get_root().add_child(macro)
 
+# IMPORTANTE: Ya no recogemos 'center' ni 'zoom', el mapa no tartamudea
 map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 
-# El mapa NO recibe "center" ni "zoom" para evitar cualquier tartamudeo
 map_output = st_folium(
     m,
     width=1200,
@@ -568,7 +673,7 @@ map_output = st_folium(
     return_on_hover=False
 )
 
-# ANCLAJE INTELIGENTE: Si dibujas algo nuevo, el mapa se ancla a sus coordenadas y no salta
+# SEGUNDA PARTE DEL ANCLAJE: Al dibujar un elemento nuevo, nos anclamos a él
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)
@@ -576,13 +681,6 @@ if map_output and map_output.get("last_active_drawing"):
     
     if not ya_existe:
         st.session_state["mis_dibujos"].append(nuevo_dibujo)
-        
-        # Atrapa las coordenadas del nuevo dibujo
-        g_type = nuevo_dibujo["geometry"]["type"]
-        coords = nuevo_dibujo["geometry"]["coordinates"]
-        if g_type == "Point": st.session_state["map_center"] = [coords[1], coords[0]]
-        elif g_type == "LineString": st.session_state["map_center"] = [coords[0][1], coords[0][0]]
-        elif g_type == "Polygon": st.session_state["map_center"] = [coords[0][0][1], coords[0][0][0]]
-        
+        anclar_al_elemento(nuevo_dibujo)
         st.session_state["map_version"] += 1
         st.rerun()

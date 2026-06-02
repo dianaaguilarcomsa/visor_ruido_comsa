@@ -9,6 +9,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 import pandas as pd
+from branca.element import Template, MacroElement
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
 
@@ -612,7 +613,13 @@ leyendas_html = """
     </div>
 </div>
 """
-m.get_root().html.add_child(folium.Element(leyendas_html))
+leyenda_macro = MacroElement()
+leyenda_macro._template = Template(f"""
+{{% macro html(this, kwargs) %}}
+{leyendas_html}
+{{% endmacro %}}
+""")
+m.get_root().add_child(leyenda_macro)
 
 # SE DECLARA ANTES DEL MAPA PARA EVITAR EL NameError
 map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"

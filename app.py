@@ -43,7 +43,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# TRADUCTOR SEGURO PARA JSON (Evita el TypeError: Object of type Point is not JSON serializable)
+# Traductor seguro para evitar errores JSON al guardar el proyecto
 def safe_serialize(obj):
     if hasattr(obj, 'coords'):
         return list(obj.coords)
@@ -337,6 +337,16 @@ with st.sidebar:
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de cultivo y labor</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
+            
+            <hr style="margin: 8px 0; border: 0; border-top: 1px solid #ddd;">
+            <div style="color: #666; font-size: 11px; margin-bottom: 4px; font-weight: bold;">Capa Ambiental (EEA Natura 2000 & CDDA)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(-45deg, transparent, transparent 2px, #0000FF 2px, #0000FF 3px); margin-right: 8px; border: 1px solid #0000FF;"></div><b>Trama Azul:</b> LIC / ZEC (Hábitats)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(45deg, transparent, transparent 2px, #FF0000 2px, #FF0000 3px); margin-right: 8px; border: 1px solid #FF0000;"></div><b>Trama Roja:</b> ZEPA (Aves)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(-45deg, transparent, transparent 2px, #0000FF 2px, #0000FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF0000 2px, #FF0000 3px); margin-right: 8px; border: 1px solid #333;"></div><b>Trama Cruzada:</b> LIC + ZEPA</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #82E000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Claro:</b> Reserva Natural Estricta (CDDA)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #006600; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Parque Nacional (CDDA)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FF9900; margin-right: 8px; border: 1px solid #ccc;"></div><b>Naranja:</b> Gestión de Hábitat/Especies (CDDA)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FF66CC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa:</b> Paisaje Protegido (CDDA)</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -460,8 +470,6 @@ else:
 
 Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='kilometers', primary_area_unit='sqmeters').add_to(m)
-
-# BUSCADOR LIMPIO: add_marker=False destruye la chincheta por completo
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
 if activar_catastro:
@@ -599,12 +607,12 @@ Draw(
 ).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDA HTML PURA (Sin plantillas macro que dan fallos) Y CON LA EEA INTEGRADA VISUALMENTE
+# LEYENDA HTML PURA (Con la leyenda de Natura 2000 y CDDA recreada exactamente según las imágenes)
 leyendas_html = """
 <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 150px; pointer-events: none;">
+<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 170px; pointer-events: none;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles (dB)</div>
     <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#00FF00; border:1px solid #999;"></span> 30 - 35</div>
     <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#66B24D; border:1px solid #999;"></span> 35 - 40</div>
@@ -617,15 +625,19 @@ leyendas_html = """
     <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#CC3333; border:1px solid #999;"></span> 70 - 75</div>
     <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; border:1px solid #999;"></span> 75 - 80</div>
     <div style="margin-bottom: 8px;"><span style="display:inline-block; width:12px; height:12px; background:#295180; border:1px solid #999;"></span> > 80</div>
+    
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
-    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF9800; border:1px solid #999;"></span> ZEPA (Aves)</div>
-    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#4CAF50; border:1px solid #999;"></span> LIC / ZEC</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:rgba(156, 39, 176, 0.6); border:1px solid #999;"></span> CDDA</div>
+    <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #0000FF 2px, #0000FF 3px); border:1px solid #0000FF; margin-right: 5px;"></span> LIC / ZEC</div>
+    <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF0000 2px, #FF0000 3px); border:1px solid #FF0000; margin-right: 5px;"></span> ZEPA</div>
+    <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #0000FF 2px, #0000FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF0000 2px, #FF0000 3px); border:1px solid #333; margin-right: 5px;"></span> LIC + ZEPA</div>
+    <div style="display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#82E000; border:1px solid #666; margin-right: 5px;"></span> CDDA (Reserva/Parque)</div>
 </div>
 """
 m.get_root().html.add_child(folium.Element(leyendas_html))
 
-# EXTRACCIÓN EXPLÍCITA DE COORDENADAS PARA QUE NO SALTE A MADRID
+# DEFINICIÓN EXPLÍCITA para evitar el NameError en la línea del st_folium
+map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
+
 map_output = st_folium(
     m,
     width=1200,

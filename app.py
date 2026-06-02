@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
+from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Visor Mapas de Ruido", layout="wide")
 
@@ -52,16 +53,6 @@ if "map_center" not in st.session_state:
     st.session_state["map_center"] = [40.4410, -3.6908]
 if "map_zoom" not in st.session_state:
     st.session_state["map_zoom"] = 15
-
-# Capturar estado de posición del mapa (evita el salto a Madrid al cambiar capas)
-map_key_actual = f"visor_mapa_{st.session_state['map_version']}"
-if map_key_actual in st.session_state and st.session_state[map_key_actual]:
-    datos_mapa = st.session_state[map_key_actual]
-    if isinstance(datos_mapa, dict):
-        if datos_mapa.get("center"):
-            st.session_state["map_center"] = [datos_mapa["center"]["lat"], datos_mapa["center"]["lng"]]
-        if datos_mapa.get("zoom"):
-            st.session_state["map_zoom"] = datos_mapa["zoom"]
 
 malla_fina_config = [
     {"min": 30, "color": "#00FF00"}, {"min": 35, "color": "#66B24D"},
@@ -113,29 +104,32 @@ def distancia_haversine(lat1, lon1, lat2, lon2):
 def parsear_kml_a_dibujos(kml_texto):
     dibujos = []
     try:
-        kml_limpio = re.sub(r'xmlns="[^"]+"', '', kml_texto)
+        kml_limpio = re.sub(r'\sxmlns="[^"]+"', '', kml_texto)
         root = ET.fromstring(kml_limpio)
         for placemark in root.iter('Placemark'):
             name_tag = placemark.find('name')
             nombre = name_tag.text if name_tag is not None else "Elemento Importado"
+            
             pt = placemark.find('.//Point')
             if pt is not None:
-                coord_tag = pt.find('coordinates')
+                coord_tag = pt.find('.//coordinates')
                 if coord_tag is not None:
                     coords = coord_tag.text.strip().split()
                     if coords:
                         lon, lat = map(float, coords[0].split(',')[:2])
                         dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}}})
                         continue
+                        
             ls = placemark.find('.//LineString')
             if ls is not None:
-                coord_tag = ls.find('coordinates')
+                coord_tag = ls.find('.//coordinates')
                 if coord_tag is not None:
                     pares = coord_tag.text.strip().split()
                     coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
                     if coords_list:
                         dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                         continue
+                        
             poly = placemark.find('.//Polygon')
             if poly is not None:
                 coord_tag = poly.find('.//coordinates')
@@ -146,7 +140,7 @@ def parsear_kml_a_dibujos(kml_texto):
                         dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial"}})
                         continue
     except Exception as e:
-        st.error(f"Error parseando KML: {e}")
+        st.error(f"Error parseando KML interno: {e}")
     return dibujos
 
 @st.cache_data(show_spinner=False)
@@ -265,8 +259,9 @@ with st.sidebar:
             json_proyecto = json.dumps(st.session_state["mis_dibujos"], indent=2)
             st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
         st.write("---")
-        archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz, .kml)", type=["json", "kmz", "kml"])
         
+        # IMPORTACIÓN SEGURA DE KMZ/KML CON MANEJO DE BYTES EN MEMORIA
+        archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz, .kml)", type=["json", "kmz", "kml"])
         if archivo_cargado is not None:
             nombre_arch = archivo_cargado.name.lower()
             if nombre_arch.endswith('.json'):
@@ -280,37 +275,39 @@ with st.sidebar:
                     st.error(f"Error al leer JSON: {e}")
                     
             elif nombre_arch.endswith('.kmz') or nombre_arch.endswith('.kml'):
-                # Paracaídas para archivos KMZ falsos (KML de texto plano con mala extensión)
                 try:
-                    archivo_cargado.seek(0)
-                    file_bytes = archivo_cargado.read()
+                    file_bytes = archivo_cargado.getvalue()
+                    kml_texto = ""
+                    # Paracaídas 1: Intentamos leer como ZIP (KMZ)
                     try:
                         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
-                            kml_internos = [f for f in zf.namelist() if f.endswith('.kml')]
+                            kml_internos = [f for f in zf.namelist() if f.lower().endswith('.kml')]
                             if kml_internos:
-                                kml_texto = zf.read(kml_internos[0]).decode('utf-8')
-                            else:
-                                kml_texto = ""
+                                kml_texto = zf.read(kml_internos[0]).decode('utf-8', errors='ignore')
                     except zipfile.BadZipFile:
-                        kml_texto = file_bytes.decode('utf-8')
+                        # Paracaídas 2: Si falla, asumimos que es texto plano (KML con mala extensión)
+                        kml_texto = file_bytes.decode('utf-8', errors='ignore')
 
-                    dibujos_kml = parsear_kml_a_dibujos(kml_texto)
-                    if dibujos_kml:
-                        st.success(f"Detectados {len(dibujos_kml)} elementos en el archivo.")
-                        if st.button("Aplicar Archivo Cargado", use_container_width=True):
-                            st.session_state["mis_dibujos"] = dibujos_kml
-                            if dibujos_kml[0]["geometry"]["coordinates"]:
-                                c = dibujos_kml[0]["geometry"]["coordinates"]
-                                if dibujos_kml[0]["geometry"]["type"] == "Point":
-                                    st.session_state["map_center"] = [c[1], c[0]]
-                                else:
-                                    st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
-                            st.session_state["map_version"] += 1
-                            st.rerun()
+                    if kml_texto:
+                        dibujos_kml = parsear_kml_a_dibujos(kml_texto)
+                        if dibujos_kml:
+                            st.success(f"Detectados {len(dibujos_kml)} elementos.")
+                            if st.button("Aplicar Archivo Cargado", use_container_width=True):
+                                st.session_state["mis_dibujos"] = dibujos_kml
+                                if dibujos_kml[0]["geometry"]["coordinates"]:
+                                    c = dibujos_kml[0]["geometry"]["coordinates"]
+                                    if dibujos_kml[0]["geometry"]["type"] == "Point":
+                                        st.session_state["map_center"] = [c[1], c[0]]
+                                    else:
+                                        st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
+                                st.session_state["map_version"] += 1
+                                st.rerun()
+                        else:
+                            st.warning("No se encontraron geometrías válidas en el archivo.")
                     else:
-                        st.warning("No se encontraron geometrías válidas en el archivo KMZ/KML.")
+                        st.error("El archivo está vacío o corrupto.")
                 except Exception as e:
-                    st.error(f"Error descomprimiendo archivo: {e}")
+                    st.error(f"Error procesando archivo: {e}")
 
     with st.expander("🗺️ Interruptores de Capas y Fondos", expanded=True):
         activar_catastro = st.checkbox("🏢 Activar capa de Catastro", value=False)
@@ -328,7 +325,6 @@ with st.sidebar:
 
     with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
-        # Usos originales SIOSE rigurosos. Solo umbrales en usos normativos.
         st.markdown("""
         <div style="font-size: 12px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.5;">
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Tejido urbano continuo (Residencial - 65 dB)</div>
@@ -470,7 +466,7 @@ else:
 Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='kilometers', primary_area_unit='sqmeters').add_to(m)
 
-# Buscador LIMPIO (sin marcador residual ni chinchetas fantasma)
+# Buscador SIN chincheta
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
 if activar_catastro:
@@ -608,49 +604,55 @@ Draw(
 ).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDAS FLOTANTES PURAS (Sin macros de Jinja para que no salgan códigos abajo, y recolocadas)
-leyendas_html = """
-<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; display: flex; flex-direction: row; align-items: center; gap: 15px; box-sizing: border-box;">
-    <div style="font-weight: 700; color: #333; border-right: 2px solid #eee; padding-right: 12px;">🛠️ Herramientas</div>
-    <div style="color: #444;">〰️ <b>Línea:</b> Pantalla</div>
-    <div style="color: #444;">⬟ <b>Polígono:</b> Población</div>
-    <div style="color: #444;">📍 <b>Marcador:</b> Foco</div>
+# LEYENDAS REFORMATEADAS ESTRICTAMENTE PARA JINJA (Sin saltos de línea externos)
+leyendas_html = """{% macro html(this, kwargs) %}
+<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px;">
+    <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; max-width: 150px; box-sizing: border-box; overflow: hidden;">
-    <div style="font-weight: 700; margin-bottom: 8px; text-align: center; color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px;">Niveles (dB)</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #00FF00; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>30 - 35</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #66B24D; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>35 - 40</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #99CC33; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>40 - 45</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #D8F2A0; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>45 - 50</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FFFF00; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>50 - 55</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FFE6AA; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>55 - 60</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FFAA33; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>60 - 65</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FF3333; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>65 - 70</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #CC3333; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>70 - 75</div>
-    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FF00FF; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>75 - 80</div>
-    <div style="display: flex; align-items: center; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #295180; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>&gt; 80</div>
+<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 140px;">
+    <div style="font-weight: bold; margin-bottom: 8px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 5px;">Niveles (dB)</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#00FF00; margin-right:5px; border:1px solid #999;"></span> 30 - 35</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#66B24D; margin-right:5px; border:1px solid #999;"></span> 35 - 40</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#99CC33; margin-right:5px; border:1px solid #999;"></span> 40 - 45</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#D8F2A0; margin-right:5px; border:1px solid #999;"></span> 45 - 50</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FFFF00; margin-right:5px; border:1px solid #999;"></span> 50 - 55</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FFE6AA; margin-right:5px; border:1px solid #999;"></span> 55 - 60</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FFAA33; margin-right:5px; border:1px solid #999;"></span> 60 - 65</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FF3333; margin-right:5px; border:1px solid #999;"></span> 65 - 70</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#CC3333; margin-right:5px; border:1px solid #999;"></span> 70 - 75</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; margin-right:5px; border:1px solid #999;"></span> 75 - 80</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#295180; margin-right:5px; border:1px solid #999;"></span> > 80</div>
 </div>
-"""
-# Inyectado como elemento propio al mapa, cero conflictos con plantillas
-m.get_root().html.add_child(folium.Element(leyendas_html))
+{% endmacro %}"""
+macro = MacroElement()
+macro._template = Template(leyendas_html)
+m.get_root().add_child(macro)
 
+# EXTRACCIÓN EXPLÍCITA DE COORDENADAS AL DIBUJAR EL MAPA PARA QUE NO SALTE A MADRID
 map_output = st_folium(
     m,
     width=1200,
     height=650,
     use_container_width=True,
     key=map_key_actual,
-    returned_objects=["last_active_drawing"],
+    returned_objects=["last_active_drawing", "center", "zoom"],
     return_on_hover=False
 )
 
-if map_output and map_output.get("last_active_drawing"):
-    nuevo_dibujo = map_output["last_active_drawing"]
-    geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True)
-    ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state["mis_dibujos"])
-    
-    if not ya_existe:
-        st.session_state["mis_dibujos"].append(nuevo_dibujo)
-        # ESTA LÍNEA ES VITAL PARA QUE DETECTE EL DIBUJO AL INSTANTE
-        st.session_state["map_version"] += 1
-        st.rerun()
+if map_output:
+    # 1. Guardar la posición actual en tiempo real
+    if "center" in map_output and map_output["center"] is not None:
+        st.session_state["map_center"] = [map_output["center"]["lat"], map_output["center"]["lng"]]
+    if "zoom" in map_output and map_output["zoom"] is not None:
+        st.session_state["map_zoom"] = map_output["zoom"]
+        
+    # 2. Gestionar los dibujos
+    if "last_active_drawing" in map_output and map_output["last_active_drawing"] is not None:
+        nuevo_dibujo = map_output["last_active_drawing"]
+        geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True)
+        ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state["mis_dibujos"])
+        
+        if not ya_existe:
+            st.session_state["mis_dibujos"].append(nuevo_dibujo)
+            st.session_state["map_version"] += 1
+            st.rerun()

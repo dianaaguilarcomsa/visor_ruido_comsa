@@ -11,7 +11,6 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
-from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Visor Mapas de Ruido", layout="wide")
 
@@ -44,7 +43,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Inicialización BLINDADA
+# TRADUCTOR SEGURO PARA JSON (Evita el TypeError: Object of type Point is not JSON serializable)
+def safe_serialize(obj):
+    if hasattr(obj, 'coords'):
+        return list(obj.coords)
+    return str(obj)
+
 if "mis_dibujos" not in st.session_state:
     st.session_state["mis_dibujos"] = []
 if "map_version" not in st.session_state:
@@ -256,11 +260,10 @@ with st.sidebar:
 
     with st.expander("💾 Gestión de Proyectos", expanded=True):
         if st.session_state["mis_dibujos"]:
-            json_proyecto = json.dumps(st.session_state["mis_dibujos"], indent=2)
+            json_proyecto = json.dumps(st.session_state["mis_dibujos"], indent=2, default=safe_serialize)
             st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
         st.write("---")
         
-        # IMPORTACIÓN SEGURA DE KMZ/KML CON MANEJO DE BYTES EN MEMORIA
         archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz, .kml)", type=["json", "kmz", "kml"])
         if archivo_cargado is not None:
             nombre_arch = archivo_cargado.name.lower()
@@ -278,14 +281,12 @@ with st.sidebar:
                 try:
                     file_bytes = archivo_cargado.getvalue()
                     kml_texto = ""
-                    # Paracaídas 1: Intentamos leer como ZIP (KMZ)
                     try:
                         with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
                             kml_internos = [f for f in zf.namelist() if f.lower().endswith('.kml')]
                             if kml_internos:
                                 kml_texto = zf.read(kml_internos[0]).decode('utf-8', errors='ignore')
                     except zipfile.BadZipFile:
-                        # Paracaídas 2: Si falla, asumimos que es texto plano (KML con mala extensión)
                         kml_texto = file_bytes.decode('utf-8', errors='ignore')
 
                     if kml_texto:
@@ -336,12 +337,6 @@ with st.sidebar:
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de cultivo y labor</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
-            
-            <hr style="margin: 8px 0; border: 0; border-top: 1px solid #ddd;">
-            <div style="color: #666; font-size: 11px; margin-bottom: 4px; font-weight: bold;">Capa Ambiental (EEA Natura 2000 & CDDA)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(45deg, #FF9800, #FF9800 2px, transparent 2px, transparent 4px); margin-right: 8px; border: 1px solid #FF9800;"></div><b>Trama Naranja:</b> ZEPA (Aves) - 55 dB</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(45deg, #4CAF50, #4CAF50 2px, transparent 2px, transparent 4px); margin-right: 8px; border: 1px solid #4CAF50;"></div><b>Trama Verde:</b> LIC / ZEC (Hábitats) - 55 dB</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: rgba(156, 39, 176, 0.6); margin-right: 8px; border: 1px solid #9C27B0;"></div><b>Morado:</b> Espacios Protegidos CDDA - 55 dB</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -466,7 +461,7 @@ else:
 Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='kilometers', primary_area_unit='sqmeters').add_to(m)
 
-# Buscador SIN chincheta
+# BUSCADOR LIMPIO: add_marker=False destruye la chincheta por completo
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
 if activar_catastro:
@@ -490,8 +485,8 @@ fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones Evaluadas").add_to(m
 fg_pantallas = folium.FeatureGroup(name="〰️ Pantallas Acústicas").add_to(m)
 fg_focos = folium.FeatureGroup(name="📍 Focos de Maquinaria").add_to(m)
 
-pantallas_json = json.dumps(pantallas_data)
-focos_json = json.dumps(focos)
+pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
+focos_json = json.dumps(focos, default=safe_serialize)
 
 css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
 
@@ -604,31 +599,33 @@ Draw(
 ).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDAS REFORMATEADAS ESTRICTAMENTE PARA JINJA (Sin saltos de línea externos)
-leyendas_html = """{% macro html(this, kwargs) %}
-<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px;">
+# LEYENDA HTML PURA (Sin plantillas macro que dan fallos) Y CON LA EEA INTEGRADA VISUALMENTE
+leyendas_html = """
+<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 140px;">
-    <div style="font-weight: bold; margin-bottom: 8px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 5px;">Niveles (dB)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#00FF00; margin-right:5px; border:1px solid #999;"></span> 30 - 35</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#66B24D; margin-right:5px; border:1px solid #999;"></span> 35 - 40</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#99CC33; margin-right:5px; border:1px solid #999;"></span> 40 - 45</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#D8F2A0; margin-right:5px; border:1px solid #999;"></span> 45 - 50</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FFFF00; margin-right:5px; border:1px solid #999;"></span> 50 - 55</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FFE6AA; margin-right:5px; border:1px solid #999;"></span> 55 - 60</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FFAA33; margin-right:5px; border:1px solid #999;"></span> 60 - 65</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF3333; margin-right:5px; border:1px solid #999;"></span> 65 - 70</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#CC3333; margin-right:5px; border:1px solid #999;"></span> 70 - 75</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; margin-right:5px; border:1px solid #999;"></span> 75 - 80</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#295180; margin-right:5px; border:1px solid #999;"></span> > 80</div>
+<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 150px; pointer-events: none;">
+    <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles (dB)</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#00FF00; border:1px solid #999;"></span> 30 - 35</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#66B24D; border:1px solid #999;"></span> 35 - 40</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#99CC33; border:1px solid #999;"></span> 40 - 45</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#D8F2A0; border:1px solid #999;"></span> 45 - 50</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFFF00; border:1px solid #999;"></span> 50 - 55</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFE6AA; border:1px solid #999;"></span> 55 - 60</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFAA33; border:1px solid #999;"></span> 60 - 65</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF3333; border:1px solid #999;"></span> 65 - 70</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#CC3333; border:1px solid #999;"></span> 70 - 75</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; border:1px solid #999;"></span> 75 - 80</div>
+    <div style="margin-bottom: 8px;"><span style="display:inline-block; width:12px; height:12px; background:#295180; border:1px solid #999;"></span> > 80</div>
+    <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF9800; border:1px solid #999;"></span> ZEPA (Aves)</div>
+    <div style="margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#4CAF50; border:1px solid #999;"></span> LIC / ZEC</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:rgba(156, 39, 176, 0.6); border:1px solid #999;"></span> CDDA</div>
 </div>
-{% endmacro %}"""
-macro = MacroElement()
-macro._template = Template(leyendas_html)
-m.get_root().add_child(macro)
+"""
+m.get_root().html.add_child(folium.Element(leyendas_html))
 
-# EXTRACCIÓN EXPLÍCITA DE COORDENADAS AL DIBUJAR EL MAPA PARA QUE NO SALTE A MADRID
+# EXTRACCIÓN EXPLÍCITA DE COORDENADAS PARA QUE NO SALTE A MADRID
 map_output = st_folium(
     m,
     width=1200,
@@ -640,17 +637,15 @@ map_output = st_folium(
 )
 
 if map_output:
-    # 1. Guardar la posición actual en tiempo real
     if "center" in map_output and map_output["center"] is not None:
         st.session_state["map_center"] = [map_output["center"]["lat"], map_output["center"]["lng"]]
     if "zoom" in map_output and map_output["zoom"] is not None:
         st.session_state["map_zoom"] = map_output["zoom"]
         
-    # 2. Gestionar los dibujos
     if "last_active_drawing" in map_output and map_output["last_active_drawing"] is not None:
         nuevo_dibujo = map_output["last_active_drawing"]
-        geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True)
-        ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state["mis_dibujos"])
+        geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)
+        ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True, default=safe_serialize) == geom_nueva_str for d in st.session_state["mis_dibujos"])
         
         if not ya_existe:
             st.session_state["mis_dibujos"].append(nuevo_dibujo)

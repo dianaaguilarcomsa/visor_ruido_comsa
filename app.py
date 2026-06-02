@@ -624,11 +624,19 @@ map_output = st_folium(
     height=650,
     use_container_width=True,
     key=map_key_actual,
-    returned_objects=["last_active_drawing"],
+    # ¡AQUÍ ESTÁ LA MAGIA! Añadimos "center" y "zoom" para que Python sepa dónde miras
+    returned_objects=["last_active_drawing", "center", "zoom"], 
     return_on_hover=False
 )
 
-# Guardar dibujos en memoria
+# 1️⃣ Guardar la posición actual ANTES de procesar los cambios para no perderla
+if map_output:
+    if map_output.get("center"):
+        st.session_state["map_center"] = [map_output["center"]["lat"], map_output["center"]["lng"]]
+    if map_output.get("zoom"):
+        st.session_state["map_zoom"] = map_output["zoom"]
+
+# 2️⃣ Guardar dibujos en memoria (Tu lógica intacta)
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)

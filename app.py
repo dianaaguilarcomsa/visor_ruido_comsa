@@ -19,16 +19,16 @@ st.markdown("""
 .stApp { background-color: var(--background-color); }
 [data-testid="stHeader"] { background-color: transparent !important; }
 [data-testid="stSidebar"] { background-color: var(--secondary-background-color); border-right: 1px solid var(--border-color); }
-[data-testid="stMetric"] { background-color: var(--secondary-background-color); padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-left: 5px solid #0093D0; transition: transform 0.2s ease-in-out; }
-[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.15); }
-[data-testid="stExpander"] { background-color: var(--secondary-background-color); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid var(--border-color); margin-bottom: 10px; }
+[data-testid="stMetric"] { background-color: var(--secondary-background-color); padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-left: 5px solid #0093D0; transition: transform 0.2s ease-in-out; }
+[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.1); }
+[data-testid="stExpander"] { background-color: var(--secondary-background-color); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid var(--border-color); margin-bottom: 10px; }
 .stButton > button { border-radius: 8px !important; font-weight: 600 !important; transition: all 0.3s ease !important; }
 h1, h2, h3, h4, h5, h6, p, span, label, div { color: var(--text-color); }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
-<div style="display: flex; align-items: center; gap: 40px; font-family: 'Arial', sans-serif; margin-bottom: 25px; background-color: var(--secondary-background-color); padding: 15px 20px; border-radius: 10px; border: 1px solid var(--border-color); border-bottom: 4px solid #E3182D; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+<div style="display: flex; align-items: center; gap: 40px; font-family: 'Segoe UI', system-ui, sans-serif; margin-bottom: 25px; background-color: var(--secondary-background-color); padding: 15px 20px; border-radius: 10px; border: 1px solid var(--border-color); border-bottom: 4px solid #E3182D; box-shadow: 0 4px 12px rgba(0,0,0,0.05);">
     <div style="display: flex; flex-direction: column; align-items: flex-start; min-width: 120px;">
         <div style="display: flex; gap: 6px; margin-bottom: 2px;">
             <div style="width: 22px; height: 22px; background-color: #E3182D; border-radius: 50%;"></div>
@@ -43,25 +43,25 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Inicialización blindada (diccionarios)
-if 'mis_dibujos' not in st.session_state:
-    st.session_state['mis_dibujos'] = []
-if 'map_version' not in st.session_state:
-    st.session_state['map_version'] = 0
-if 'map_center' not in st.session_state:
-    st.session_state['map_center'] = [40.4410, -3.6908]
-if 'map_zoom' not in st.session_state:
-    st.session_state['map_zoom'] = 15
+# Inicialización BLINDADA (Solo sintaxis de diccionario para evitar el AttributeError)
+if "mis_dibujos" not in st.session_state:
+    st.session_state["mis_dibujos"] = []
+if "map_version" not in st.session_state:
+    st.session_state["map_version"] = 0
+if "map_center" not in st.session_state:
+    st.session_state["map_center"] = [40.4410, -3.6908]
+if "map_zoom" not in st.session_state:
+    st.session_state["map_zoom"] = 15
 
 # Capturar estado del mapa
-map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
+map_key_actual = f"visor_mapa_{st.session_state['map_version']}"
 if map_key_actual in st.session_state and st.session_state[map_key_actual]:
     datos_mapa = st.session_state[map_key_actual]
     if isinstance(datos_mapa, dict):
         if datos_mapa.get("center"):
-            st.session_state['map_center'] = [datos_mapa["center"]["lat"], datos_mapa["center"]["lng"]]
+            st.session_state["map_center"] = [datos_mapa["center"]["lat"], datos_mapa["center"]["lng"]]
         if datos_mapa.get("zoom"):
-            st.session_state['map_zoom'] = datos_mapa["zoom"]
+            st.session_state["map_zoom"] = datos_mapa["zoom"]
 
 malla_fina_config = [
     {"min": 30, "color": "#00FF00"}, {"min": 35, "color": "#66B24D"},
@@ -82,7 +82,7 @@ def cargar_maquinas():
 df_maq = cargar_maquinas()
 lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
 
-for idx, feature in enumerate(st.session_state.get('mis_dibujos', [])):
+for idx, feature in enumerate(st.session_state["mis_dibujos"]):
     tipo = feature["geometry"]["type"]
     if "properties" not in feature: feature["properties"] = {}
     if "name" not in feature["properties"]:
@@ -261,8 +261,8 @@ with st.sidebar:
     st.title("⚙️ Panel de Control")
 
     with st.expander("💾 Gestión de Proyectos", expanded=True):
-        if st.session_state.get('mis_dibujos'):
-            json_proyecto = json.dumps(st.session_state['mis_dibujos'], indent=2)
+        if st.session_state["mis_dibujos"]:
+            json_proyecto = json.dumps(st.session_state["mis_dibujos"], indent=2)
             st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
         st.write("---")
         archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz)", type=["json", "kmz"])
@@ -272,8 +272,8 @@ with st.sidebar:
                 try:
                     datos = json.load(archivo_cargado)
                     if st.button("Aplicar JSON Cargado", use_container_width=True):
-                        st.session_state['mis_dibujos'] = datos
-                        st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
+                        st.session_state["mis_dibujos"] = datos
+                        st.session_state["map_version"] += 1
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error al leer JSON: {e}")
@@ -287,14 +287,14 @@ with st.sidebar:
                             if dibujos_kml:
                                 st.success(f"Detectados {len(dibujos_kml)} elementos en el KMZ.")
                                 if st.button("Aplicar KMZ Cargado", use_container_width=True):
-                                    st.session_state['mis_dibujos'] = dibujos_kml
+                                    st.session_state["mis_dibujos"] = dibujos_kml
                                     if dibujos_kml[0]["geometry"]["coordinates"]:
                                         c = dibujos_kml[0]["geometry"]["coordinates"]
                                         if dibujos_kml[0]["geometry"]["type"] == "Point":
-                                            st.session_state['map_center'] = [c[1], c[0]]
+                                            st.session_state["map_center"] = [c[1], c[0]]
                                         else:
-                                            st.session_state['map_center'] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
-                                    st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
+                                            st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
+                                    st.session_state["map_version"] += 1
                                     st.rerun()
                             else:
                                 st.warning("No se encontraron geometrías válidas en el KMZ.")
@@ -320,16 +320,16 @@ with st.sidebar:
     with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
         st.markdown("""
-        <div style="font-size: 13px; font-family: Arial, sans-serif; line-height: 1.4;">
+        <div style="font-size: 13px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.4;">
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Residencial Continuo (Máx: D/T 65 dB | N 55 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Residencial Discontinuo (Máx: D/T 65 dB | N 55 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Zonas Industriales (Máx: D/T 75 dB | N 65 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate / Fucsia:</b> Infraestructuras de Transporte / Ejes ADIF</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa / Salmón:</b> Dotacional Sanitario o Docente (Máx: D/T 60 dB | N 50 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Recreativo y Espectáculos (Máx: D/T 73 dB | N 63 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(45deg, #4CAF50, #4CAF50 2px, #E8F5E9 2px, #E8F5E9 4px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Trama Rayada:</b> Red Natura 2000 (LIC, ZEC, ZEPA) y ENP (Máx: 55 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de Cultivo y Labor</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #00A600; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Espacios Protegidos / Áreas Tranquilas (Máx: 55 dB)</div>
             <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
         </div>
         """, unsafe_allow_html=True)
@@ -340,9 +340,9 @@ with st.sidebar:
         umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
 
     with st.expander("🏷️ 2. Configuración de Elementos", expanded=True):
-        if not st.session_state.get('mis_dibujos'): st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
+        if not st.session_state["mis_dibujos"]: st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
         else:
-            for idx, feature in enumerate(st.session_state['mis_dibujos']):
+            for idx, feature in enumerate(st.session_state["mis_dibujos"]):
                 tipo = feature["geometry"]["type"]
                 props = feature["properties"]
                 icono = "📍" if tipo == "Point" else "〰️" if tipo == "LineString" else "⬟"
@@ -350,8 +350,8 @@ with st.sidebar:
                 with col_tit: st.markdown(f"**{icono} Elemento {idx+1} ({props['name']})**")
                 with col_del:
                     if st.button("🗑️", key=f"borrar_elem_{idx}"):
-                        st.session_state['mis_dibujos'].pop(idx)
-                        st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
+                        st.session_state["mis_dibujos"].pop(idx)
+                        st.session_state["map_version"] += 1
                         st.rerun()
                 props["name"] = st.text_input(f"Nombre {icono}", value=props["name"], key=f"name_{idx}")
                 if tipo == "Point":
@@ -399,9 +399,9 @@ with st.sidebar:
                 st.write("---")
 
     with st.expander("📥 3. Exportación", expanded=True):
-        if st.session_state.get('mis_dibujos'):
+        if st.session_state["mis_dibujos"]:
             tmp_focos, tmp_pan, tmp_pob = [], [], []
-            for f in st.session_state['mis_dibujos']:
+            for f in st.session_state["mis_dibujos"]:
                 t = f["geometry"]["type"]
                 if t == "Point": tmp_focos.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "emision": sumar_decibelios(f["properties"]["maq"])})
                 elif t == "LineString": tmp_pan.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "aten": f["properties"]["aten"]})
@@ -417,15 +417,15 @@ with st.sidebar:
         """)
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
-        st.session_state['mis_dibujos'] = []
-        st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
+        st.session_state["mis_dibujos"] = []
+        st.session_state["map_version"] += 1
         st.rerun()
 
 focos = []
 pantallas_data = []
 poblaciones = []
 
-for feature in st.session_state.get('mis_dibujos', []):
+for feature in st.session_state["mis_dibujos"]:
     tipo = feature["geometry"]["type"]
     coords = feature["geometry"]["coordinates"]
     props = feature["properties"]
@@ -441,8 +441,8 @@ col1.metric("📍 Focos Detectados", len(focos))
 col2.metric("〰️ Pantallas Detectadas", len(pantallas_data))
 col3.metric("⬟ Zonas Evaluadas", len(poblaciones))
 
-centro = st.session_state.get('map_center', [40.4410, -3.6908])
-zoom = st.session_state.get('map_zoom', 15)
+centro = st.session_state["map_center"]
+zoom = st.session_state["map_zoom"]
 
 if fondo_seleccionado == "Fondo Gris Claro (Simplificado)":
     m = folium.Map(location=centro, zoom_start=zoom, tiles="cartodbpositron")
@@ -592,27 +592,28 @@ Draw(
 ).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
+# NUEVO CSS para las leyendas flotantes: Fuente nativa, bordes suaves, fondo translúcido
 leyendas_html = """
 {% macro html(this, kwargs) %}
-<div style="position: absolute; bottom: 20px; left: 20px; z-index: 9999; background-color: white; padding: 8px 15px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 13px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; display: flex; flex-direction: row; align-items: center; gap: 20px; box-sizing: border-box;">
-    <div style="font-weight: bold; color: #4B4B4D; border-right: 2px solid #eee; padding-right: 15px;">🛠️ Herramientas</div>
-    <div style="color: black;">〰️ <b>Línea:</b> Pantalla</div>
-    <div style="color: black;">⬟ <b>Polígono:</b> Población</div>
-    <div style="color: black;">📍 <b>Marcador:</b> Foco</div>
+<div style="position: absolute; bottom: 20px; left: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 10px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; display: flex; flex-direction: row; align-items: center; gap: 15px; box-sizing: border-box;">
+    <div style="font-weight: 700; color: #333; border-right: 2px solid #eee; padding-right: 12px;">🛠️ Herramientas</div>
+    <div style="color: #444;">〰️ <b>Línea:</b> Pantalla</div>
+    <div style="color: #444;">⬟ <b>Polígono:</b> Población</div>
+    <div style="color: #444;">📍 <b>Marcador:</b> Foco</div>
 </div>
-<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background-color: white; padding: 10px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; max-width: 150px; box-sizing: border-box; overflow: hidden;">
-    <div style="font-weight: bold; margin-bottom: 6px; text-align: center; color: #4B4B4D; border-bottom: 1px solid #eee; padding-bottom: 4px;">Niveles (dB)</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #00FF00; margin-right: 8px; border: 1px solid #ccc;"></div>30 - 35</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #66B24D; margin-right: 8px; border: 1px solid #ccc;"></div>35 - 40</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #99CC33; margin-right: 8px; border: 1px solid #ccc;"></div>40 - 45</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #D8F2A0; margin-right: 8px; border: 1px solid #ccc;"></div>45 - 50</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFFF00; margin-right: 8px; border: 1px solid #ccc;"></div>50 - 55</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFE6AA; margin-right: 8px; border: 1px solid #ccc;"></div>55 - 60</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFAA33; margin-right: 8px; border: 1px solid #ccc;"></div>60 - 65</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FF3333; margin-right: 8px; border: 1px solid #ccc;"></div>65 - 70</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #CC3333; margin-right: 8px; border: 1px solid #ccc;"></div>70 - 75</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FF00FF; margin-right: 8px; border: 1px solid #ccc;"></div>75 - 80</div>
-    <div style="display: flex; align-items: center; color: black;"><div style="width: 15px; height: 15px; background: #295180; margin-right: 8px; border: 1px solid #ccc;"></div>&gt; 80</div>
+<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; max-width: 150px; box-sizing: border-box; overflow: hidden;">
+    <div style="font-weight: 700; margin-bottom: 8px; text-align: center; color: #333; border-bottom: 1px solid #eee; padding-bottom: 5px;">Niveles (dB)</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #00FF00; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>30 - 35</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #66B24D; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>35 - 40</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #99CC33; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>40 - 45</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #D8F2A0; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>45 - 50</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FFFF00; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>50 - 55</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FFE6AA; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>55 - 60</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FFAA33; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>60 - 65</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FF3333; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>65 - 70</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #CC3333; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>70 - 75</div>
+    <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FF00FF; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>75 - 80</div>
+    <div style="display: flex; align-items: center; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #295180; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>&gt; 80</div>
 </div>
 {% endmacro %}
 """
@@ -633,7 +634,7 @@ map_output = st_folium(
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True)
-    ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state.get('mis_dibujos', []))
+    ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state["mis_dibujos"])
     if not ya_existe:
-        st.session_state['mis_dibujos'].append(nuevo_dibujo)
+        st.session_state["mis_dibujos"].append(nuevo_dibujo)
         st.rerun()

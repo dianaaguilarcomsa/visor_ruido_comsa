@@ -43,7 +43,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# TRADUCTOR SEGURO PARA JSON (Evita el TypeError: Object of type Point is not JSON serializable)
 def safe_serialize(obj):
     if hasattr(obj, 'coords'):
         return list(obj.coords)
@@ -113,7 +112,6 @@ def parsear_kml_a_dibujos(kml_texto):
         for placemark in root.iter('Placemark'):
             name_tag = placemark.find('name')
             nombre = name_tag.text if name_tag is not None else "Elemento Importado"
-            
             pt = placemark.find('.//Point')
             if pt is not None:
                 coord_tag = pt.find('.//coordinates')
@@ -123,7 +121,6 @@ def parsear_kml_a_dibujos(kml_texto):
                         lon, lat = map(float, coords[0].split(',')[:2])
                         dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}}})
                         continue
-                        
             ls = placemark.find('.//LineString')
             if ls is not None:
                 coord_tag = ls.find('.//coordinates')
@@ -133,7 +130,6 @@ def parsear_kml_a_dibujos(kml_texto):
                     if coords_list:
                         dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                         continue
-                        
             poly = placemark.find('.//Polygon')
             if poly is not None:
                 coord_tag = poly.find('.//coordinates')
@@ -310,26 +306,30 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"Error procesando archivo: {e}")
 
-    with st.expander("🗺️ Interruptores de Capas y Fondos", expanded=True):
-        activar_catastro = st.checkbox("🏢 Activar capa de Catastro", value=False)
-        activar_siose = st.checkbox("🗺️ Activar capa de Usos del Suelo (SIOSE)", value=False)
-        activar_ambientales = st.checkbox("🌲 Activar Espacios Protegidos y Fauna Sensible", value=False)
-        activar_fluviales = st.checkbox("💧 Activar capa de Zonas Fluviales", value=False)
-        activar_transportes = st.checkbox("🛣️ Activar capa de Infraestructuras de Transporte", value=False)
-        st.write("---")
-        idx_fondo_defecto = 1 if activar_ambientales else 0
-        fondo_seleccionado = st.radio(
-            "Fondo del Mapa Base:",
-            ["OpenStreetMap (Color Tradicional)", "Fondo Gris Claro (Simplificado)", "Satélite (Esri World Imagery)", "Topográfico (OpenTopoMap)"],
-            index=idx_fondo_defecto
-        )
+    # LEYENDA SIOSE RESTAURADA CON LÍMITES EXACTOS
+    with st.expander("📚 Leyendas Capas Oficiales (SIOSE / ADIF)", expanded=False):
+        st.markdown("**Límites Legales de Ruido (España / ADIF):**")
+        st.markdown("""
+        <div style="font-size: 12px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.5;">
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Tejido urbano continuo (Residencial - 65 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Tejido urbano discontinuo (Residencial - 65 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Zonas industriales y comerciales (75 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate:</b> Infraestructuras de Transporte / Ejes ADIF</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa:</b> Dotacional, sanitario, docente (60 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Zonas verdes y deportivas</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de cultivo y labor</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.info("💡 **Consejo:** Para encender o apagar las capas (Satélite, Catastro, SIOSE, Natura 2000...), utiliza el **icono de capas 📚 arriba a la derecha en el mapa**. Así no perderás tu posición al moverte.")
 
-    with st.expander("📜 1. Fondo de Isófonas Global", expanded=True):
+    with st.expander("📜 Fondo de Isófonas Global", expanded=True):
         tipo_malla = st.radio("Estilo de Visualización:", ["Malla Básica (Semáforo)", "Malla Fina (Intervalos 5dB)"])
         activar_umbral_global = st.checkbox("Mostrar línea de límite común voluntaria", value=True)
         umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
 
-    with st.expander("🏷️ 2. Configuración de Elementos", expanded=True):
+    with st.expander("🏷️ Configuración de Elementos", expanded=True):
         if not st.session_state["mis_dibujos"]: st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
         else:
             for idx, feature in enumerate(st.session_state["mis_dibujos"]):
@@ -433,34 +433,26 @@ col3.metric("⬟ Zonas Evaluadas", len(poblaciones))
 centro = st.session_state["map_center"]
 zoom = st.session_state["map_zoom"]
 
-if fondo_seleccionado == "Fondo Gris Claro (Simplificado)":
-    m = folium.Map(location=centro, zoom_start=zoom, tiles="cartodbpositron")
-elif fondo_seleccionado == "Satélite (Esri World Imagery)":
-    m = folium.Map(location=centro, zoom_start=zoom, tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Tiles &copy; Esri")
-elif fondo_seleccionado == "Topográfico (OpenTopoMap)":
-    m = folium.Map(location=centro, zoom_start=zoom, tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr="Map data: &copy; OpenStreetMap contributors | Style: OpenTopoMap")
-else:
-    m = folium.Map(location=centro, zoom_start=zoom, tiles="OpenStreetMap")
+# CREACIÓN DEL MAPA CON TODAS LAS CAPAS INTEGRADAS NATIVAMENTE
+m = folium.Map(location=centro, zoom_start=zoom, tiles=None)
+
+# Añadimos los fondos base
+folium.TileLayer("OpenStreetMap", name="🗺️ Fondo OpenStreetMap", show=True).add_to(m)
+folium.TileLayer("cartodbpositron", name="⚪ Fondo Gris Claro", show=False).add_to(m)
+folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Esri", name="🌍 Satélite (Esri)", show=False).add_to(m)
+folium.TileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr="OpenTopoMap", name="🏔️ Topográfico", show=False).add_to(m)
 
 Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='kilometers', primary_area_unit='sqmeters').add_to(m)
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
-if activar_catastro:
-    folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, control=False).add_to(m)
-
-if activar_siose:
-    folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, control=False).add_to(m)
-
-if activar_ambientales:
-    folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", fmt="image/png", transparent=True, version="1.3.0", opacity=0.8, overlay=True, control=False).add_to(m)
-    folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/Natura2000Sites/MapServer/WMSServer", layers="0,1,2,3", fmt="image/png", transparent=True, version="1.3.0", opacity=1.0, overlay=True, control=False).add_to(m)
-
-if activar_fluviales:
-    folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/hidrografia", layers="HY.PhysicalWaters.Waterbodies", name="💧 Zonas Fluviales", fmt="image/png", transparent=True, opacity=0.6, overlay=True, control=False).add_to(m)
-
-if activar_transportes:
-    folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/transportes", layers="TN.RoadTransportNetwork.RoadLink", name="🛣️ Transportes", fmt="image/png", transparent=True, opacity=0.7, overlay=True, control=False).add_to(m)
+# Añadimos las capas de visores externos (Están apagadas por defecto, se encienden con el icono 📚)
+folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", name="🌲 Espacios Protegidos CDDA", fmt="image/png", transparent=True, opacity=0.8, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/Natura2000Sites/MapServer/WMSServer", layers="0,1,2,3", name="🌲 Red Natura 2000", fmt="image/png", transparent=True, opacity=1.0, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/hidrografia", layers="HY.PhysicalWaters.Waterbodies", name="💧 Zonas Fluviales", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/transportes", layers="TN.RoadTransportNetwork.RoadLink", name="🛣️ Transportes", fmt="image/png", transparent=True, opacity=0.7, overlay=True, show=False).add_to(m)
 
 fg_isofonas = folium.FeatureGroup(name="🔊 Ondas de Ruido (Isófonas)").add_to(m)
 fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones Evaluadas").add_to(m)
@@ -579,15 +571,16 @@ Draw(
     draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False},
     edit_options={'edit': False, 'remove': False}
 ).add_to(m)
+
+# Icono de capas nativo de Folium para encender/apagar sin que Streamlit se recargue
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDAS REPLICADAS EXACTAMENTE A LAS IMÁGENES
+# LEYENDA HTML PURA (Sin variables de macros que rompan, tramas exactas de la EEA)
 leyendas_html = """
 <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
 <div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 230px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
-    
     <div>
         <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles (dB)</div>
         <div style="display: flex; flex-wrap: wrap;">
@@ -604,7 +597,6 @@ leyendas_html = """
             <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#295180; border:1px solid #999;"></span> > 80</div>
         </div>
     </div>
-    
     <div>
         <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
         <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> LIC/ZEC (Hábitats)</div>
@@ -622,10 +614,10 @@ leyendas_html = """
 """
 m.get_root().html.add_child(folium.Element(leyendas_html))
 
+# SE DECLARA ANTES DEL MAPA PARA EVITAR EL NameError
 map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 
-# SE ELIMINAN "center" Y "zoom" DE LOS RETURNED OBJECTS.
-# Esto detiene para siempre el tartamudeo y el salto del mapa al desplazarte.
+# El mapa NO recibe "center" ni "zoom" para evitar cualquier tartamudeo o salto a Madrid
 map_output = st_folium(
     m,
     width=1200,
@@ -636,13 +628,13 @@ map_output = st_folium(
     return_on_hover=False
 )
 
-if map_output:
-    if "last_active_drawing" in map_output and map_output["last_active_drawing"] is not None:
-        nuevo_dibujo = map_output["last_active_drawing"]
-        geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)
-        ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True, default=safe_serialize) == geom_nueva_str for d in st.session_state["mis_dibujos"])
-        
-        if not ya_existe:
-            st.session_state["mis_dibujos"].append(nuevo_dibujo)
-            st.session_state["map_version"] += 1
-            st.rerun()
+# Guardar dibujos en memoria
+if map_output and map_output.get("last_active_drawing"):
+    nuevo_dibujo = map_output["last_active_drawing"]
+    geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)
+    ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True, default=safe_serialize) == geom_nueva_str for d in st.session_state["mis_dibujos"])
+    
+    if not ya_existe:
+        st.session_state["mis_dibujos"].append(nuevo_dibujo)
+        st.session_state["map_version"] += 1
+        st.rerun()

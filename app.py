@@ -617,26 +617,18 @@ m.get_root().html.add_child(folium.Element(leyendas_html))
 # SE DECLARA ANTES DEL MAPA PARA EVITAR EL NameError
 map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 
-# El mapa NO recibe "center" ni "zoom" para evitar cualquier tartamudeo o salto a Madrid
+# Dejamos SOLO "last_active_drawing" para que hacer zoom o moverse sea 100% fluido y no recargue
 map_output = st_folium(
     m,
     width=1200,
     height=650,
     use_container_width=True,
     key=map_key_actual,
-    # ¡AQUÍ ESTÁ LA MAGIA! Añadimos "center" y "zoom" para que Python sepa dónde miras
-    returned_objects=["last_active_drawing", "center", "zoom"], 
+    returned_objects=["last_active_drawing"], 
     return_on_hover=False
 )
 
-# 1️⃣ Guardar la posición actual ANTES de procesar los cambios para no perderla
-if map_output:
-    if map_output.get("center"):
-        st.session_state["map_center"] = [map_output["center"]["lat"], map_output["center"]["lng"]]
-    if map_output.get("zoom"):
-        st.session_state["map_zoom"] = map_output["zoom"]
-
-# 2️⃣ Guardar dibujos en memoria (Tu lógica intacta)
+# Guardar dibujos en memoria
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)
@@ -644,5 +636,22 @@ if map_output and map_output.get("last_active_drawing"):
     
     if not ya_existe:
         st.session_state["mis_dibujos"].append(nuevo_dibujo)
+        
+        # --- EL TRUCO ESTÁ AQUÍ ---
+        # Extraemos las coordenadas del dibujo recién hecho y centramos el mapa ahí.
+        # Así no nos vamos a Madrid al recargar la capa, y navegar sigue siendo libre y fluido.
+        coords = nuevo_dibujo["geometry"]["coordinates"]
+        tipo = nuevo_dibujo["geometry"]["type"]
+        
+        try:
+            if tipo == "Point":
+                st.session_state["map_center"] = [coords[1], coords[0]]
+            elif tipo == "LineString" and coords:
+                st.session_state["map_center"] = [coords[0][1], coords[0][0]]
+            elif tipo == "Polygon" and coords and coords[0]:
+                st.session_state["map_center"] = [coords[0][0][1], coords[0][0][0]]
+        except Exception:
+            pass # Si hay alguna geometría anómala, evitamos que rompa
+            
         st.session_state["map_version"] += 1
         st.rerun()

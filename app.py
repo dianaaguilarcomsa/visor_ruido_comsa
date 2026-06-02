@@ -1,11 +1,12 @@
 import streamlit as st
 import folium
-from folium.plugins import Draw, Fullscreen
-from streamlit_folium import st_folium
+from folium.plugins import Draw, Fullscreen, MeasureControl, Geocoder
 import math
 import zipfile
 import io
 import json
+import re
+import xml.etree.ElementTree as ET
 import pandas as pd
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
@@ -13,36 +14,54 @@ from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Visor Mapas de Ruido", layout="wide")
 
+# Estilos adaptados dinámicamente tanto para Modo Claro como Modo Oscuro
 st.markdown("""
 <style>
-.stApp { background-color: #E6F2FF; }
+.stApp { background-color: var(--background-color); }
 [data-testid="stHeader"] { background-color: transparent !important; }
-[data-testid="stSidebar"] { background-color: #F4F9FF; border-right: 1px solid #D0E3F5; }
-[data-testid="stMetric"] { background-color: #ffffff; padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.04); border-left: 5px solid #0093D0; transition: transform 0.2s ease-in-out; }
-[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.08); }
-[data-testid="stExpander"] { background-color: #ffffff; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.03); border: 1px solid #E0E8F0; margin-bottom: 10px; }
+[data-testid="stSidebar"] { background-color: var(--secondary-background-color); border-right: 1px solid var(--border-color); }
+[data-testid="stMetric"] { background-color: var(--secondary-background-color); padding: 15px 20px; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-left: 5px solid #0093D0; transition: transform 0.2s ease-in-out; }
+[data-testid="stMetric"]:hover { transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.15); }
+[data-testid="stExpander"] { background-color: var(--secondary-background-color); border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); border: 1px solid var(--border-color); margin-bottom: 10px; }
 .stButton > button { border-radius: 8px !important; font-weight: 600 !important; transition: all 0.3s ease !important; }
+h1, h2, h3, h4, h5, h6, p, span, label, div { color: var(--text-color); }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown("""
-<div style="display: flex; align-items: center; gap: 40px; font-family: 'Arial', sans-serif; margin-bottom: 25px; background-color: #FFE5E5; padding: 15px 20px; border-radius: 10px 10px 0 0; border-bottom: 4px solid #E3182D; box-shadow: 0 4px 12px rgba(227,24,45,0.1);">
+<div style="display: flex; align-items: center; gap: 40px; font-family: 'Arial', sans-serif; margin-bottom: 25px; background-color: var(--secondary-background-color); padding: 15px 20px; border-radius: 10px; border: 1px solid var(--border-color); border-bottom: 4px solid #E3182D; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
     <div style="display: flex; flex-direction: column; align-items: flex-start; min-width: 120px;">
         <div style="display: flex; gap: 6px; margin-bottom: 2px;">
             <div style="width: 22px; height: 22px; background-color: #E3182D; border-radius: 50%;"></div>
-            <div style="width: 22px; height: 22px; background-color: #0093D0;"></div>
+            <div style="width: 22px; height: 22px; background-color: #0093D0; border-radius: 50%;"></div>
         </div>
-        <div style="color: #4B4B4D; font-size: 28px; font-weight: 900; line-height: 1; letter-spacing: -1px;">COMSA</div>
-        <div style="color: #4B4B4D; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;">CORPORACIÓN</div>
+        <div style="color: var(--text-color); font-size: 28px; font-weight: 900; line-height: 1; letter-spacing: -1px;">COMSA</div>
+        <div style="color: var(--text-color); opacity: 0.8; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;">CORPORACIÓN</div>
     </div>
-    <div style="border-left: 2px solid #D9A0A0; padding-left: 30px;">
-        <h1 style="color: #4B4B4D; margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px;">Visor Mapas de Ruido</h1>
+    <div style="border-left: 2px solid var(--border-color); padding-left: 30px;">
+        <h1 style="color: var(--text-color); margin: 0; font-size: 2.2rem; font-weight: 800; letter-spacing: -0.5px;">Visor Mapas de Ruido</h1>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
+# Inicialización de estados globales
 if 'mis_dibujos' not in st.session_state:
     st.session_state.mis_dibujos = []
+if 'map_version' not in st.session_state:
+    st.session_state.map_version = 0
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [40.4410, -3.6908]
+if 'map_zoom' not in st.session_state:
+    st.session_state.map_zoom = 15
+
+# Capturar las coordenadas actuales del mapa antes de redibujar
+map_key_actual = f"visor_mapa_{st.session_state.map_version}"
+if map_key_actual in st.session_state and st.session_state[map_key_actual]:
+    datos_mapa = st.session_state[map_key_actual]
+    if "center" in datos_mapa and datos_mapa["center"]:
+        st.session_state.map_center = [datos_mapa["center"]["lat"], datos_mapa["center"]["lng"]]
+    if "zoom" in datos_mapa and datos_mapa["zoom"]:
+        st.session_state.map_zoom = datos_mapa["zoom"]
 
 malla_fina_config = [
     {"min": 30, "color": "#00FF00"}, {"min": 35, "color": "#66B24D"},
@@ -63,6 +82,7 @@ def cargar_maquinas():
 df_maq = cargar_maquinas()
 lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
 
+# Homologación y preparación de propiedades internas
 for idx, feature in enumerate(st.session_state.mis_dibujos):
     tipo = feature["geometry"]["type"]
     if "properties" not in feature: feature["properties"] = {}
@@ -90,6 +110,63 @@ def distancia_haversine(lat1, lon1, lat2, lon2):
     phi1, phi2, d_phi, d_lam = map(math.radians, [lat1, lat2, lat2-lat1, lon2-lon1])
     a = math.sin(d_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lam/2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+def parsear_kml_a_dibujos(kml_texto):
+    dibujos = []
+    try:
+        kml_limpio = re.sub(r'xmlns="[^"]+"', '', kml_texto)
+        root = ET.fromstring(kml_limpio)
+        for placemark in root.iter('Placemark'):
+            name_tag = placemark.find('name')
+            nombre = name_tag.text if name_tag is not None else "Elemento Importado"
+            
+            # Punto (Foco)
+            pt = placemark.find('.//Point')
+            if pt is not None:
+                coord_tag = pt.find('coordinates')
+                if coord_tag is not None:
+                    coords = coord_tag.text.strip().split()
+                    if coords:
+                        lon, lat = map(float, coords[0].split(',')[:2])
+                        dibujos.append({
+                            "type": "Feature",
+                            "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                            "properties": {"name": nombre, "maq": {}}
+                        })
+                        continue
+            
+            # LineString (Pantalla)
+            ls = placemark.find('.//LineString')
+            if ls is not None:
+                coord_tag = ls.find('coordinates')
+                if coord_tag is not None:
+                    pares = coord_tag.text.strip().split()
+                    coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
+                    if coords_list:
+                        dibujos.append({
+                            "type": "Feature",
+                            "geometry": {"type": "LineString", "coordinates": coords_list},
+                            "properties": {"name": nombre, "aten": 15.0}
+                        })
+                        continue
+            
+            # Polygon (Población)
+            poly = placemark.find('.//Polygon')
+            if poly is not None:
+                coord_tag = poly.find('.//coordinates')
+                if coord_tag is not None:
+                    pares = coord_tag.text.strip().split()
+                    coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
+                    if coords_list:
+                        dibujos.append({
+                            "type": "Feature",
+                            "geometry": {"type": "Polygon", "coordinates": [coords_list]},
+                            "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial"}
+                        })
+                        continue
+    except Exception as e:
+        st.error(f"Error parseando KML: {e}")
+    return dibujos
 
 @st.cache_data(show_spinner=False)
 def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, pantallas_data_json, focos_all_json, r_earth=6378137.0):
@@ -202,56 +279,84 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
 with st.sidebar:
     st.title("⚙️ Panel de Control")
 
+    with st.expander("💾 Gestión de Proyectos", expanded=True):
+        if st.session_state.mis_dibujos:
+            json_proyecto = json.dumps(st.session_state.mis_dibujos, indent=2)
+            st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
+        st.write("---")
+        archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz)", type=["json", "kmz"])
+        if archivo_cargado is not None:
+            nombre_arch = archivo_cargado.name.lower()
+            if nombre_arch.endswith('.json'):
+                try:
+                    datos = json.load(archivo_cargado)
+                    if st.button("Aplicar JSON Cargado", use_container_width=True):
+                        st.session_state.mis_dibujos = datos
+                        st.session_state.map_version += 1
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error al leer JSON: {e}")
+            elif nombre_arch.endswith('.kmz'):
+                try:
+                    with zipfile.ZipFile(archivo_cargado) as zf:
+                        kml_internos = [f for f in zf.namelist() if f.endswith('.kml')]
+                        if kml_internos:
+                            kml_texto = zf.read(kml_internos[0]).decode('utf-8')
+                            dibujos_kml = parsear_kml_a_dibujos(kml_texto)
+                            if dibujos_kml:
+                                st.success(f"Detectados {len(dibujos_kml)} elementos en el KMZ.")
+                                if st.button("Aplicar KMZ Cargado", use_container_width=True):
+                                    st.session_state.mis_dibujos = dibujos_kml
+                                    if dibujos_kml[0]["geometry"]["coordinates"]:
+                                        c = dibujos_kml[0]["geometry"]["coordinates"]
+                                        if dibujos_kml[0]["geometry"]["type"] == "Point":
+                                            st.session_state.map_center = [c[1], c[0]]
+                                        else:
+                                            st.session_state.map_center = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
+                                    st.session_state.map_version += 1
+                                    st.rerun()
+                            else:
+                                st.warning("No se encontraron geometrías válidas en el KMZ.")
+                        else:
+                            st.error("KMZ inválido (Falta archivo KML interno).")
+                except Exception as e:
+                    st.error(f"Error descomprimiendo KMZ: {e}")
+
     with st.expander("🗺️ Interruptores de Capas y Fondos", expanded=True):
         activar_catastro = st.checkbox("🏢 Activar capa de Catastro", value=False)
         activar_siose = st.checkbox("🗺️ Activar capa de Usos del Suelo (SIOSE)", value=False)
         activar_ambientales = st.checkbox("🌲 Activar Espacios Protegidos y Fauna Sensible", value=False)
         activar_fluviales = st.checkbox("💧 Activar capa de Zonas Fluviales", value=False)
         activar_transportes = st.checkbox("🛣️ Activar capa de Infraestructuras de Transporte", value=False)
-        
         st.write("---")
         idx_fondo_defecto = 1 if activar_ambientales else 0
         fondo_seleccionado = st.radio(
             "Fondo del Mapa Base:",
             ["OpenStreetMap (Color Tradicional)", "Fondo Gris Claro (Simplificado)", "Satélite (Esri World Imagery)", "Topográfico (OpenTopoMap)"],
-            index=idx_fondo_defecto,
-            help="Elige tu mapa base. El fondo Gris Claro se activa automáticamente al encender la capa de Espacios Protegidos."
+            index=idx_fondo_defecto
         )
-    
+
     with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
-        st.markdown("**Leyenda de Usos del Suelo (SIOSE / Corine):**")
+        st.markdown("**Límites Legales de Ruido (España / ADIF):**")
         st.markdown("""
-        <div style="font-size: 13px; font-family: Arial, sans-serif; line-height: 1.4; margin-bottom: 15px;">
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Tejido urbano continuo (Residencial)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Tejido urbano discontinuo</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Zonas Industriales</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate / Fucsia:</b> Infraestructuras de Transporte</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa / Salmón:</b> Dotacional (Sanitario, Docente, Cultural)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Zonas Verdes Urbanas (Recreativo)</div>
+        <div style="font-size: 13px; font-family: Arial, sans-serif; line-height: 1.4;">
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Residencial Continuo (Máx: D/T 65 dB | N 55 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Residencial Discontinuo (Máx: D/T 65 dB | N 55 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Zonas Industriales (Máx: D/T 75 dB | N 65 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate / Fucsia:</b> Infraestructuras de Transporte / Ejes ADIF</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa / Salmón:</b> Dotacional Sanitario o Docente (Máx: D/T 60 dB | N 50 dB)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Recreativo y Espectáculos (Máx: D/T 73 dB | N 63 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de Cultivo y Labor</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #00A600; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Bosques y Naturaleza (Fauna)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #00A600; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Espacios Protegidos / Áreas Tranquilas (Máx: 55 dB)</div>
             <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("**Leyenda Ambiental (Red Natura 2000 y EEA):**")
-        st.markdown("""
-        <div style="font-size: 13px; font-family: Arial, sans-serif; line-height: 1.4; border: 1px solid #eee; padding: 10px; border-radius: 5px; background: #fff;">
-            <b>Red Natura 2000 (Fauna Sensible)</b><br>
-            <div style="display: flex; align-items: center; margin-bottom: 4px; margin-top: 4px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Rayado Azul:</b> Zonas LIC (Hábitats)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Rayado Rojo:</b> Zonas ZEPA (Aves)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 12px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Rayado Mixto:</b> LIC y ZEPA combinados</div>
-            <b>Espacios Naturales Protegidos (ENP)</b><br>
-            <div style="display: flex; align-items: center; margin-bottom: 4px; margin-top: 4px;"><div style="width: 15px; height: 15px; background: #9900FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Parques Nacionales / Reservas (IUCN I-II)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #2E8B57; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Oscuro:</b> Parques Naturales (IUCN III-VI)</div>
-            <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #FF9900; margin-right: 8px; border: 1px solid #ccc;"></div><b>Naranja:</b> Otras Designaciones Ambientales</div>
         </div>
         """, unsafe_allow_html=True)
 
     with st.expander("📜 1. Fondo de Isófonas Global", expanded=True):
         tipo_malla = st.radio("Estilo de Visualización:", ["Malla Básica (Semáforo)", "Malla Fina (Intervalos 5dB)"])
-        umbral_referencia = st.number_input("Umbral de Referencia para Semáforo (dB):", value=65.0, step=1.0)
+        activar_umbral_global = st.checkbox("Mostrar línea de límite común voluntaria", value=True)
+        umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
 
     with st.expander("🏷️ 2. Configuración de Elementos", expanded=True):
         if not st.session_state.mis_dibujos: st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
@@ -265,6 +370,7 @@ with st.sidebar:
                 with col_del:
                     if st.button("🗑️", key=f"borrar_elem_{idx}"):
                         st.session_state.mis_dibujos.pop(idx)
+                        st.session_state.map_version += 1
                         st.rerun()
                 props["name"] = st.text_input(f"Nombre {icono}", value=props["name"], key=f"name_{idx}")
                 if tipo == "Point":
@@ -331,6 +437,7 @@ with st.sidebar:
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state.mis_dibujos.clear()
+        st.session_state.map_version += 1
         st.rerun()
 
 focos = []
@@ -353,18 +460,21 @@ col1.metric("📍 Focos Detectados", len(focos))
 col2.metric("〰️ Pantallas Detectadas", len(pantallas_data))
 col3.metric("⬟ Zonas Evaluadas", len(poblaciones))
 
-centro = [focos[-1]["coords"][1], focos[-1]["coords"][0]] if focos else [40.4410, -3.6908]
+centro = st.session_state.map_center
+zoom = st.session_state.map_zoom
 
 if fondo_seleccionado == "Fondo Gris Claro (Simplificado)":
-    m = folium.Map(location=centro, zoom_start=15, tiles="cartodbpositron")
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="cartodbpositron")
 elif fondo_seleccionado == "Satélite (Esri World Imagery)":
-    m = folium.Map(location=centro, zoom_start=15, tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Tiles &copy; Esri")
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Tiles &copy; Esri")
 elif fondo_seleccionado == "Topográfico (OpenTopoMap)":
-    m = folium.Map(location=centro, zoom_start=15, tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr="Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)")
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr="Map data: &copy; OpenStreetMap contributors | Style: OpenTopoMap")
 else:
-    m = folium.Map(location=centro, zoom_start=15, tiles="OpenStreetMap")
+    m = folium.Map(location=centro, zoom_start=zoom, tiles="OpenStreetMap")
 
 Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
+MeasureControl(position='topleft', primary_length_unit='meters', secondary_length_unit='kilometers', primary_area_unit='sqmeters').add_to(m)
+Geocoder(position='topleft').add_to(m)
 
 if activar_catastro:
     folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, control=False).add_to(m)
@@ -425,6 +535,22 @@ else:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
                 folium.Polygon(locations=coords_folium, color=color, fill=True, fill_opacity=opacity, weight=w+1, tooltip=f"Límite: {umb} dB").add_to(fg_isofonas)
 
+if activar_umbral_global:
+    poligonos_limite = []
+    for f in focos:
+        if f["emision"] > umbral_referencia:
+            coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_referencia, pantallas_json, focos_json)
+            if len(coords) >= 3:
+                poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
+                if not poly.is_valid: poly = poly.buffer(0)
+                poligonos_limite.append(poly)
+    if poligonos_limite:
+        merged_poly = unary_union(poligonos_limite)
+        geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
+        for geom in geoms:
+            coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
+            folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10", tooltip=f"Límite Común Voluntario: {umbral_referencia} dB").add_to(fg_isofonas)
+
 for pob in poblaciones:
     poly_coords = pob["coords"]
     nombre = pob["name"]
@@ -478,28 +604,34 @@ for f in focos:
     if nombre:
         folium.Marker([lat, lon], icon=folium.DivIcon(html=f'<div style="{css_texto}">{nombre}<br>({emision_foco:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
 
-Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}).add_to(m)
+Draw(
+    export=False, 
+    draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False},
+    edit_options={'edit': False, 'remove': False}
+).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
 leyendas_html = """
 {% macro html(this, kwargs) %}
-<div style="position: absolute; top: 15px; left: 60px; z-index: 9999; background-color: white; padding: 8px 15px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 13px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; display: flex; flex-direction: row; align-items: center; gap: 20px;">
+<div style="position: absolute; bottom: 20px; left: 20px; z-index: 9999; background-color: white; padding: 8px 15px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 13px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; display: flex; flex-direction: row; align-items: center; gap: 20px; box-sizing: border-box;">
     <div style="font-weight: bold; color: #4B4B4D; border-right: 2px solid #eee; padding-right: 15px;">🛠️ Herramientas</div>
-    <div>〰️ <b>Línea:</b> Pantalla</div><div>⬟ <b>Polígono:</b> Población</div><div>📍 <b>Marcador:</b> Foco</div>
+    <div style="color: black;">〰️ <b>Línea:</b> Pantalla</div>
+    <div style="color: black;">⬟ <b>Polígono:</b> Población</div>
+    <div style="color: black;">📍 <b>Marcador:</b> Foco</div>
 </div>
-<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background-color: white; padding: 10px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95;">
+<div style="position: absolute; bottom: 30px; right: 20px; z-index: 9999; background-color: white; padding: 10px; border: 2px solid #ccc; border-radius: 8px; font-family: Arial, sans-serif; font-size: 12px; box-shadow: 2px 2px 5px rgba(0,0,0,0.3); pointer-events: none; opacity: 0.95; max-width: 150px; box-sizing: border-box; overflow: hidden;">
     <div style="font-weight: bold; margin-bottom: 6px; text-align: center; color: #4B4B4D; border-bottom: 1px solid #eee; padding-bottom: 4px;">Niveles (dB)</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #00FF00; margin-right: 8px; border: 1px solid #ccc;"></div>30 - 35</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #66B24D; margin-right: 8px; border: 1px solid #ccc;"></div>35 - 40</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #99CC33; margin-right: 8px; border: 1px solid #ccc;"></div>40 - 45</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #D8F2A0; margin-right: 8px; border: 1px solid #ccc;"></div>45 - 50</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #FFFF00; margin-right: 8px; border: 1px solid #ccc;"></div>50 - 55</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #FFE6AA; margin-right: 8px; border: 1px solid #ccc;"></div>55 - 60</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #FFAA33; margin-right: 8px; border: 1px solid #ccc;"></div>60 - 65</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #FF3333; margin-right: 8px; border: 1px solid #ccc;"></div>65 - 70</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #CC3333; margin-right: 8px; border: 1px solid #ccc;"></div>70 - 75</div>
-    <div style="display: flex; align-items: center; margin-bottom: 2px;"><div style="width: 15px; height: 15px; background: #FF00FF; margin-right: 8px; border: 1px solid #ccc;"></div>75 - 80</div>
-    <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #295180; margin-right: 8px; border: 1px solid #ccc;"></div>> 80</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #00FF00; margin-right: 8px; border: 1px solid #ccc;"></div>30 - 35</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #66B24D; margin-right: 8px; border: 1px solid #ccc;"></div>35 - 40</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #99CC33; margin-right: 8px; border: 1px solid #ccc;"></div>40 - 45</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #D8F2A0; margin-right: 8px; border: 1px solid #ccc;"></div>45 - 50</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFFF00; margin-right: 8px; border: 1px solid #ccc;"></div>50 - 55</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFE6AA; margin-right: 8px; border: 1px solid #ccc;"></div>55 - 60</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FFAA33; margin-right: 8px; border: 1px solid #ccc;"></div>60 - 65</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FF3333; margin-right: 8px; border: 1px solid #ccc;"></div>65 - 70</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #CC3333; margin-right: 8px; border: 1px solid #ccc;"></div>70 - 75</div>
+    <div style="display: flex; align-items: center; margin-bottom: 2px; color: black;"><div style="width: 15px; height: 15px; background: #FF00FF; margin-right: 8px; border: 1px solid #ccc;"></div>75 - 80</div>
+    <div style="display: flex; align-items: center; color: black;"><div style="width: 15px; height: 15px; background: #295180; margin-right: 8px; border: 1px solid #ccc;"></div>&gt; 80</div>
 </div>
 {% endmacro %}
 """
@@ -512,7 +644,7 @@ map_output = st_folium(
     width=1200,
     height=650,
     use_container_width=True,
-    key="visor_mapa",
+    key=map_key_actual,
     returned_objects=["last_active_drawing"],
     return_on_hover=False
 )

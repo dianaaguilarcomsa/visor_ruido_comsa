@@ -1,7 +1,7 @@
 import streamlit as st
 import folium
 from folium.plugins import Draw, Fullscreen, MeasureControl, Geocoder
-from streamlit_folium import st_folium  # ¡Esta era la importación que faltaba!
+from streamlit_folium import st_folium
 import math
 import zipfile
 import io
@@ -11,7 +11,6 @@ import xml.etree.ElementTree as ET
 import pandas as pd
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
-from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Visor Mapas de Ruido", layout="wide")
 
@@ -266,7 +265,8 @@ with st.sidebar:
             json_proyecto = json.dumps(st.session_state["mis_dibujos"], indent=2)
             st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
         st.write("---")
-        archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz)", type=["json", "kmz"])
+        archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz, .kml)", type=["json", "kmz", "kml"])
+        
         if archivo_cargado is not None:
             nombre_arch = archivo_cargado.name.lower()
             if nombre_arch.endswith('.json'):
@@ -278,31 +278,40 @@ with st.sidebar:
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error al leer JSON: {e}")
-            elif nombre_arch.endswith('.kmz'):
+                    
+            elif nombre_arch.endswith('.kmz') or nombre_arch.endswith('.kml'):
+                # FIX: Paracaídas para archivos KMZ falsos (que en realidad son texto KML directo)
                 try:
-                    with zipfile.ZipFile(archivo_cargado) as zf:
-                        kml_internos = [f for f in zf.namelist() if f.endswith('.kml')]
-                        if kml_internos:
-                            kml_texto = zf.read(kml_internos[0]).decode('utf-8')
-                            dibujos_kml = parsear_kml_a_dibujos(kml_texto)
-                            if dibujos_kml:
-                                st.success(f"Detectados {len(dibujos_kml)} elementos en el KMZ.")
-                                if st.button("Aplicar KMZ Cargado", use_container_width=True):
-                                    st.session_state["mis_dibujos"] = dibujos_kml
-                                    if dibujos_kml[0]["geometry"]["coordinates"]:
-                                        c = dibujos_kml[0]["geometry"]["coordinates"]
-                                        if dibujos_kml[0]["geometry"]["type"] == "Point":
-                                            st.session_state["map_center"] = [c[1], c[0]]
-                                        else:
-                                            st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
-                                    st.session_state["map_version"] += 1
-                                    st.rerun()
+                    archivo_cargado.seek(0)
+                    file_bytes = archivo_cargado.read()
+                    try:
+                        with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                            kml_internos = [f for f in zf.namelist() if f.endswith('.kml')]
+                            if kml_internos:
+                                kml_texto = zf.read(kml_internos[0]).decode('utf-8')
                             else:
-                                st.warning("No se encontraron geometrías válidas en el KMZ.")
-                        else:
-                            st.error("KMZ inválido (Falta archivo KML interno).")
+                                kml_texto = ""
+                    except zipfile.BadZipFile:
+                        # Si da BadZipFile, lo forzamos a texto plano asumiendo que es un KML mal nombrado
+                        kml_texto = file_bytes.decode('utf-8')
+
+                    dibujos_kml = parsear_kml_a_dibujos(kml_texto)
+                    if dibujos_kml:
+                        st.success(f"Detectados {len(dibujos_kml)} elementos en el archivo.")
+                        if st.button("Aplicar Archivo Cargado", use_container_width=True):
+                            st.session_state["mis_dibujos"] = dibujos_kml
+                            if dibujos_kml[0]["geometry"]["coordinates"]:
+                                c = dibujos_kml[0]["geometry"]["coordinates"]
+                                if dibujos_kml[0]["geometry"]["type"] == "Point":
+                                    st.session_state["map_center"] = [c[1], c[0]]
+                                else:
+                                    st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
+                            st.session_state["map_version"] += 1
+                            st.rerun()
+                    else:
+                        st.warning("No se encontraron geometrías válidas en el archivo KMZ/KML.")
                 except Exception as e:
-                    st.error(f"Error descomprimiendo KMZ: {e}")
+                    st.error(f"Error descomprimiendo archivo: {e}")
 
     with st.expander("🗺️ Interruptores de Capas y Fondos", expanded=True):
         activar_catastro = st.checkbox("🏢 Activar capa de Catastro", value=False)
@@ -320,7 +329,6 @@ with st.sidebar:
 
     with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
-        # Corrección: Uso de min-width para cuadraditos y textos más cortos para evitar saltos de línea
         st.markdown("""
         <div style="font-size: 12px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.5;">
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Res. Continuo (D:65/N:55)</div>
@@ -601,9 +609,9 @@ Draw(
 ).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
+# FIX LEYENDAS: Fuera macros problemáticas y ubicadas arriba en el centro para no tapar nada
 leyendas_html = """
-{% macro html(this, kwargs) %}
-<div style="position: absolute; bottom: 20px; left: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 10px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; display: flex; flex-direction: row; align-items: center; gap: 15px; box-sizing: border-box;">
+<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; display: flex; flex-direction: row; align-items: center; gap: 15px; box-sizing: border-box;">
     <div style="font-weight: 700; color: #333; border-right: 2px solid #eee; padding-right: 12px;">🛠️ Herramientas</div>
     <div style="color: #444;">〰️ <b>Línea:</b> Pantalla</div>
     <div style="color: #444;">⬟ <b>Polígono:</b> Población</div>
@@ -623,11 +631,9 @@ leyendas_html = """
     <div style="display: flex; align-items: center; margin-bottom: 4px; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #FF00FF; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>75 - 80</div>
     <div style="display: flex; align-items: center; color: #444;"><div style="width: 14px; height: 14px; border-radius: 3px; background: #295180; margin-right: 8px; border: 1px solid rgba(0,0,0,0.1);"></div>&gt; 80</div>
 </div>
-{% endmacro %}
 """
-macro = MacroElement()
-macro._template = Template(leyendas_html)
-m.get_root().add_child(macro)
+# Inyección HTML limpia y directa al núcleo del mapa sin usar plantillas
+m.get_root().html.add_child(folium.Element(leyendas_html))
 
 map_output = st_folium(
     m,
@@ -643,6 +649,9 @@ if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True)
     ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state["mis_dibujos"])
+    
     if not ya_existe:
         st.session_state["mis_dibujos"].append(nuevo_dibujo)
+        # FIX VITAL: Se debe refrescar la versión siempre que se añade algo o Streamlit crashea el estado de dibujo
+        st.session_state["map_version"] += 1
         st.rerun()

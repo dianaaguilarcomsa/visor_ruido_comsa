@@ -14,7 +14,6 @@ from branca.element import Template, MacroElement
 
 st.set_page_config(page_title="Visor Mapas de Ruido", layout="wide")
 
-# Estilos adaptados dinámicamente tanto para Modo Claro como Modo Oscuro
 st.markdown("""
 <style>
 .stApp { background-color: var(--background-color); }
@@ -44,24 +43,25 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Inicialización de estados globales
+# Inicialización blindada (diccionarios)
 if 'mis_dibujos' not in st.session_state:
-    st.session_state.mis_dibujos = []
+    st.session_state['mis_dibujos'] = []
 if 'map_version' not in st.session_state:
-    st.session_state.map_version = 0
+    st.session_state['map_version'] = 0
 if 'map_center' not in st.session_state:
-    st.session_state.map_center = [40.4410, -3.6908]
+    st.session_state['map_center'] = [40.4410, -3.6908]
 if 'map_zoom' not in st.session_state:
-    st.session_state.map_zoom = 15
+    st.session_state['map_zoom'] = 15
 
-# Capturar las coordenadas actuales del mapa antes de redibujar
-map_key_actual = f"visor_mapa_{st.session_state.map_version}"
+# Capturar estado del mapa
+map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 if map_key_actual in st.session_state and st.session_state[map_key_actual]:
     datos_mapa = st.session_state[map_key_actual]
-    if "center" in datos_mapa and datos_mapa["center"]:
-        st.session_state.map_center = [datos_mapa["center"]["lat"], datos_mapa["center"]["lng"]]
-    if "zoom" in datos_mapa and datos_mapa["zoom"]:
-        st.session_state.map_zoom = datos_mapa["zoom"]
+    if isinstance(datos_mapa, dict):
+        if datos_mapa.get("center"):
+            st.session_state['map_center'] = [datos_mapa["center"]["lat"], datos_mapa["center"]["lng"]]
+        if datos_mapa.get("zoom"):
+            st.session_state['map_zoom'] = datos_mapa["zoom"]
 
 malla_fina_config = [
     {"min": 30, "color": "#00FF00"}, {"min": 35, "color": "#66B24D"},
@@ -82,8 +82,7 @@ def cargar_maquinas():
 df_maq = cargar_maquinas()
 lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
 
-# Homologación y preparación de propiedades internas
-for idx, feature in enumerate(st.session_state.mis_dibujos):
+for idx, feature in enumerate(st.session_state.get('mis_dibujos', [])):
     tipo = feature["geometry"]["type"]
     if "properties" not in feature: feature["properties"] = {}
     if "name" not in feature["properties"]:
@@ -119,8 +118,6 @@ def parsear_kml_a_dibujos(kml_texto):
         for placemark in root.iter('Placemark'):
             name_tag = placemark.find('name')
             nombre = name_tag.text if name_tag is not None else "Elemento Importado"
-            
-            # Punto (Foco)
             pt = placemark.find('.//Point')
             if pt is not None:
                 coord_tag = pt.find('coordinates')
@@ -128,14 +125,8 @@ def parsear_kml_a_dibujos(kml_texto):
                     coords = coord_tag.text.strip().split()
                     if coords:
                         lon, lat = map(float, coords[0].split(',')[:2])
-                        dibujos.append({
-                            "type": "Feature",
-                            "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                            "properties": {"name": nombre, "maq": {}}
-                        })
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}}})
                         continue
-            
-            # LineString (Pantalla)
             ls = placemark.find('.//LineString')
             if ls is not None:
                 coord_tag = ls.find('coordinates')
@@ -143,14 +134,8 @@ def parsear_kml_a_dibujos(kml_texto):
                     pares = coord_tag.text.strip().split()
                     coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
                     if coords_list:
-                        dibujos.append({
-                            "type": "Feature",
-                            "geometry": {"type": "LineString", "coordinates": coords_list},
-                            "properties": {"name": nombre, "aten": 15.0}
-                        })
+                        dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                         continue
-            
-            # Polygon (Población)
             poly = placemark.find('.//Polygon')
             if poly is not None:
                 coord_tag = poly.find('.//coordinates')
@@ -158,11 +143,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     pares = coord_tag.text.strip().split()
                     coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
                     if coords_list:
-                        dibujos.append({
-                            "type": "Feature",
-                            "geometry": {"type": "Polygon", "coordinates": [coords_list]},
-                            "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial"}
-                        })
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial"}})
                         continue
     except Exception as e:
         st.error(f"Error parseando KML: {e}")
@@ -280,8 +261,8 @@ with st.sidebar:
     st.title("⚙️ Panel de Control")
 
     with st.expander("💾 Gestión de Proyectos", expanded=True):
-        if st.session_state.mis_dibujos:
-            json_proyecto = json.dumps(st.session_state.mis_dibujos, indent=2)
+        if st.session_state.get('mis_dibujos'):
+            json_proyecto = json.dumps(st.session_state['mis_dibujos'], indent=2)
             st.download_button("💾 Guardar Proyecto (.json)", data=json_proyecto, file_name="proyecto_ruido.json", mime="application/json", use_container_width=True)
         st.write("---")
         archivo_cargado = st.file_uploader("📂 Importar Proyecto (.json, .kmz)", type=["json", "kmz"])
@@ -291,8 +272,8 @@ with st.sidebar:
                 try:
                     datos = json.load(archivo_cargado)
                     if st.button("Aplicar JSON Cargado", use_container_width=True):
-                        st.session_state.mis_dibujos = datos
-                        st.session_state.map_version += 1
+                        st.session_state['mis_dibujos'] = datos
+                        st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
                         st.rerun()
                 except Exception as e:
                     st.error(f"Error al leer JSON: {e}")
@@ -306,14 +287,14 @@ with st.sidebar:
                             if dibujos_kml:
                                 st.success(f"Detectados {len(dibujos_kml)} elementos en el KMZ.")
                                 if st.button("Aplicar KMZ Cargado", use_container_width=True):
-                                    st.session_state.mis_dibujos = dibujos_kml
+                                    st.session_state['mis_dibujos'] = dibujos_kml
                                     if dibujos_kml[0]["geometry"]["coordinates"]:
                                         c = dibujos_kml[0]["geometry"]["coordinates"]
                                         if dibujos_kml[0]["geometry"]["type"] == "Point":
-                                            st.session_state.map_center = [c[1], c[0]]
+                                            st.session_state['map_center'] = [c[1], c[0]]
                                         else:
-                                            st.session_state.map_center = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
-                                    st.session_state.map_version += 1
+                                            st.session_state['map_center'] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
+                                    st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
                                     st.rerun()
                             else:
                                 st.warning("No se encontraron geometrías válidas en el KMZ.")
@@ -359,9 +340,9 @@ with st.sidebar:
         umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
 
     with st.expander("🏷️ 2. Configuración de Elementos", expanded=True):
-        if not st.session_state.mis_dibujos: st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
+        if not st.session_state.get('mis_dibujos'): st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
         else:
-            for idx, feature in enumerate(st.session_state.mis_dibujos):
+            for idx, feature in enumerate(st.session_state['mis_dibujos']):
                 tipo = feature["geometry"]["type"]
                 props = feature["properties"]
                 icono = "📍" if tipo == "Point" else "〰️" if tipo == "LineString" else "⬟"
@@ -369,8 +350,8 @@ with st.sidebar:
                 with col_tit: st.markdown(f"**{icono} Elemento {idx+1} ({props['name']})**")
                 with col_del:
                     if st.button("🗑️", key=f"borrar_elem_{idx}"):
-                        st.session_state.mis_dibujos.pop(idx)
-                        st.session_state.map_version += 1
+                        st.session_state['mis_dibujos'].pop(idx)
+                        st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
                         st.rerun()
                 props["name"] = st.text_input(f"Nombre {icono}", value=props["name"], key=f"name_{idx}")
                 if tipo == "Point":
@@ -418,9 +399,9 @@ with st.sidebar:
                 st.write("---")
 
     with st.expander("📥 3. Exportación", expanded=True):
-        if st.session_state.mis_dibujos:
+        if st.session_state.get('mis_dibujos'):
             tmp_focos, tmp_pan, tmp_pob = [], [], []
-            for f in st.session_state.mis_dibujos:
+            for f in st.session_state['mis_dibujos']:
                 t = f["geometry"]["type"]
                 if t == "Point": tmp_focos.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "emision": sumar_decibelios(f["properties"]["maq"])})
                 elif t == "LineString": tmp_pan.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "aten": f["properties"]["aten"]})
@@ -436,15 +417,15 @@ with st.sidebar:
         """)
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
-        st.session_state.mis_dibujos.clear()
-        st.session_state.map_version += 1
+        st.session_state['mis_dibujos'] = []
+        st.session_state['map_version'] = st.session_state.get('map_version', 0) + 1
         st.rerun()
 
 focos = []
 pantallas_data = []
 poblaciones = []
 
-for feature in st.session_state.mis_dibujos:
+for feature in st.session_state.get('mis_dibujos', []):
     tipo = feature["geometry"]["type"]
     coords = feature["geometry"]["coordinates"]
     props = feature["properties"]
@@ -460,8 +441,8 @@ col1.metric("📍 Focos Detectados", len(focos))
 col2.metric("〰️ Pantallas Detectadas", len(pantallas_data))
 col3.metric("⬟ Zonas Evaluadas", len(poblaciones))
 
-centro = st.session_state.map_center
-zoom = st.session_state.map_zoom
+centro = st.session_state.get('map_center', [40.4410, -3.6908])
+zoom = st.session_state.get('map_zoom', 15)
 
 if fondo_seleccionado == "Fondo Gris Claro (Simplificado)":
     m = folium.Map(location=centro, zoom_start=zoom, tiles="cartodbpositron")
@@ -652,7 +633,7 @@ map_output = st_folium(
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True)
-    ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state.mis_dibujos)
+    ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True) == geom_nueva_str for d in st.session_state.get('mis_dibujos', []))
     if not ya_existe:
-        st.session_state.mis_dibujos.append(nuevo_dibujo)
+        st.session_state['mis_dibujos'].append(nuevo_dibujo)
         st.rerun()

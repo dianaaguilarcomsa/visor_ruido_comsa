@@ -451,7 +451,6 @@ Geocoder(position='topleft', add_marker=False).add_to(m)
 folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", name="🌲 Espacios Protegidos CDDA", fmt="image/png", transparent=True, opacity=0.8, overlay=True, show=False).add_to(m)
-folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/Natura2000Sites/MapServer/WMSServer", layers="0,1,2,3", name="🌲 Red Natura 2000", fmt="image/png", transparent=True, opacity=1.0, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/hidrografia", layers="HY.PhysicalWaters.Waterbodies", name="💧 Zonas Fluviales", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/transportes", layers="TN.RoadTransportNetwork.RoadLink", name="🛣️ Transportes", fmt="image/png", transparent=True, opacity=0.7, overlay=True, show=False).add_to(m)
 
@@ -623,6 +622,28 @@ m.get_root().add_child(leyenda_macro)
 
 # SE DECLARA ANTES DEL MAPA PARA EVITAR EL NameError
 map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
+
+estilos_capas = """
+<style>
+/* Hacer más compacto el menú nativo de capas de Leaflet */
+.leaflet-control-layers-expanded {
+    padding: 6px 10px !important;
+}
+.leaflet-control-layers label {
+    font-size: 12px !important;  /* Bajar el tamaño de la fuente */
+    line-height: 1.2 !important; /* Reducir el interlineado */
+    margin-bottom: 2px !important;
+}
+.leaflet-control-layers-selector {
+    margin-top: 2px !important; /* Alinear bien los circulitos y cuadraditos */
+    margin-right: 5px !important;
+}
+.leaflet-control-layers-separator {
+    margin: 4px 0 !important; /* Menos espacio en la línea separadora */
+}
+</style>
+"""
+m.get_root().header.add_child(folium.Element(estilos_capas))
 
 # Dejamos SOLO "last_active_drawing" para que hacer zoom o moverse sea 100% fluido y no recargue
 map_output = st_folium(

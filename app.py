@@ -661,19 +661,29 @@ macro._template = Template(leyendas_html)
 m.get_root().add_child(macro)
 
 # IMPORTANTE: Ya no recogemos 'center' ni 'zoom', el mapa no tartamudea
+# SE DECLARA ANTES DEL MAPA PARA EVITAR EL NameError
 map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 
+# El mapa NO recibe "center" ni "zoom" para evitar cualquier tartamudeo o salto a Madrid
 map_output = st_folium(
     m,
     width=1200,
     height=650,
     use_container_width=True,
     key=map_key_actual,
-    returned_objects=["last_active_drawing"],
+    # ¡AQUÍ ESTÁ LA MAGIA! Añadimos "center" y "zoom" para que Python sepa dónde miras
+    returned_objects=["last_active_drawing", "center", "zoom"], 
     return_on_hover=False
 )
 
-# SEGUNDA PARTE DEL ANCLAJE: Al dibujar un elemento nuevo, nos anclamos a él
+# 1️⃣ Guardar la posición actual ANTES de procesar los cambios para no perderla
+if map_output:
+    if map_output.get("center"):
+        st.session_state["map_center"] = [map_output["center"]["lat"], map_output["center"]["lng"]]
+    if map_output.get("zoom"):
+        st.session_state["map_zoom"] = map_output["zoom"]
+
+# 2️⃣ Guardar dibujos en memoria (Tu lógica intacta)
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)
@@ -681,6 +691,5 @@ if map_output and map_output.get("last_active_drawing"):
     
     if not ya_existe:
         st.session_state["mis_dibujos"].append(nuevo_dibujo)
-        anclar_al_elemento(nuevo_dibujo)
         st.session_state["map_version"] += 1
         st.rerun()

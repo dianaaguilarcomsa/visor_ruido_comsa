@@ -580,7 +580,7 @@ leyendas_html = """
 <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 30px; right: 60px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 230px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
+<div style="position: absolute; bottom: 30px; left: 60px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 230px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
     <div>
         <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles (dB)</div>
         <div style="display: flex; flex-wrap: wrap;">

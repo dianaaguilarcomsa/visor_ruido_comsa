@@ -1,6 +1,7 @@
 import streamlit as st
 import folium
 from folium.plugins import Draw, Fullscreen, MeasureControl, Geocoder
+from streamlit_folium import st_folium  # ¡Esta era la importación que faltaba!
 import math
 import zipfile
 import io
@@ -43,7 +44,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Inicialización BLINDADA (Solo sintaxis de diccionario para evitar el AttributeError)
+# Inicialización BLINDADA
 if "mis_dibujos" not in st.session_state:
     st.session_state["mis_dibujos"] = []
 if "map_version" not in st.session_state:
@@ -319,18 +320,26 @@ with st.sidebar:
 
     with st.expander("📚 Leyendas Capas Oficiales", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
+        # Corrección: Uso de min-width para cuadraditos y textos más cortos para evitar saltos de línea
         st.markdown("""
-        <div style="font-size: 13px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.4;">
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Residencial Continuo (Máx: D/T 65 dB | N 55 dB)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Residencial Discontinuo (Máx: D/T 65 dB | N 55 dB)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Zonas Industriales (Máx: D/T 75 dB | N 65 dB)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate / Fucsia:</b> Infraestructuras de Transporte / Ejes ADIF</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa / Salmón:</b> Dotacional Sanitario o Docente (Máx: D/T 60 dB | N 50 dB)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Recreativo y Espectáculos (Máx: D/T 73 dB | N 63 dB)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: repeating-linear-gradient(45deg, #4CAF50, #4CAF50 2px, #E8F5E9 2px, #E8F5E9 4px); margin-right: 8px; border: 1px solid #ccc;"></div><b>Trama Rayada:</b> Red Natura 2000 (LIC, ZEC, ZEPA) y ENP (Máx: 55 dB)</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
-            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de Cultivo y Labor</div>
-            <div style="display: flex; align-items: center;"><div style="width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
+        <div style="font-size: 12px; font-family: 'Segoe UI', system-ui, sans-serif; line-height: 1.5;">
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6004D; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo oscuro:</b> Res. Continuo (D:65/N:55)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FF0000; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rojo vivo:</b> Res. Discontinuo (D:65/N:55)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #CC4DF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Morado:</b> Industriales (D:75/N:65)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate:</b> Inf. Transporte / ADIF</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa:</b> Dotacional (D:60/N:50)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Recreativo (D:73/N:63)</div>
+            
+            <hr style="margin: 8px 0; border: 0; border-top: 1px solid #ddd;">
+            <div style="color: #666; font-size: 11px; margin-bottom: 4px; font-weight: bold;">Capa Ambiental (EEA Natura 2000 & CDDA)</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(45deg, #FF9800, #FF9800 2px, transparent 2px, transparent 4px); margin-right: 8px; border: 1px solid #FF9800;"></div><b>Trama Naranja:</b> ZEPA (Aves) - 55 dB</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: repeating-linear-gradient(45deg, #4CAF50, #4CAF50 2px, transparent 2px, transparent 4px); margin-right: 8px; border: 1px solid #4CAF50;"></div><b>Trama Verde:</b> LIC / ZEC (Hábitats) - 55 dB</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: rgba(156, 39, 176, 0.6); margin-right: 8px; border: 1px solid #9C27B0;"></div><b>Morado:</b> Espacios Protegidos CDDA - 55 dB</div>
+            <hr style="margin: 8px 0; border: 0; border-top: 1px solid #ddd;">
+            
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Obras o extracción</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de Cultivo</div>
+            <div style="display: flex; align-items: center;"><div style="min-width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -592,7 +601,6 @@ Draw(
 ).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# NUEVO CSS para las leyendas flotantes: Fuente nativa, bordes suaves, fondo translúcido
 leyendas_html = """
 {% macro html(this, kwargs) %}
 <div style="position: absolute; bottom: 20px; left: 20px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 10px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); backdrop-filter: blur(4px); pointer-events: none; display: flex; flex-direction: row; align-items: center; gap: 15px; box-sizing: border-box;">

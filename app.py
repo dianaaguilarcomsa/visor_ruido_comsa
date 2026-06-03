@@ -327,6 +327,8 @@ with st.sidebar:
 
     with st.expander("📜 Fondo de Isófonas Global", expanded=True):
         tipo_malla = st.radio("Estilo de Visualización:", ["Malla Básica (Semáforo)", "Malla Fina (Intervalos 5dB)"])
+        # NUEVO DESLIZADOR DE TRANSPARENCIA
+        opacidad_malla_fina = st.slider("Opacidad de la Malla Fina:", min_value=0.1, max_value=1.0, value=0.4, step=0.1)
         activar_umbral_global = st.checkbox("Mostrar línea de límite común voluntaria", value=True)
         umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
 
@@ -511,7 +513,7 @@ if activar_umbral_global:
         geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
         for geom in geoms:
             coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-            folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10", tooltip=f"Límite Común Voluntario: {umbral_referencia} dB").add_to(fg_isofonas)
+            folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]

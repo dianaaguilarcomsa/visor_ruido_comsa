@@ -481,7 +481,8 @@ if tipo_malla == "Malla Fina (Intervalos 5dB)":
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=0.4, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
+                # Aquí está aplicada tu nueva variable opacidad_malla_fina con la indentación correcta
+                folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
 else:
     for umb, color, opacity, w in [(umbral_referencia - 20, "green", 0.1, 1), (umbral_referencia - 10, "orange", 0.2, 1), (umbral_referencia, "red", 0.3, 2)]:
         poligonos_banda = []

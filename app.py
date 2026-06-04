@@ -481,7 +481,7 @@ if tipo_malla == "Malla Fina (Intervalos 5dB)":
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                # Aquí usamos tu slider: opacidad_malla_fina
+                # Esta usa banda y tu opacidad personalizada
                 folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
 else:
     for umb, color, opacity, w in [(umbral_referencia - 20, "green", 0.1, 1), (umbral_referencia - 10, "orange", 0.2, 1), (umbral_referencia, "red", 0.3, 2)]:
@@ -498,7 +498,7 @@ else:
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                # Esta es la Malla Básica (aquí no hay variable "banda", se queda intacta)
+                # Esta es la básica, NO lleva banda, solo usa color y opacity
                 folium.Polygon(locations=coords_folium, color=color, fill=True, fill_opacity=opacity, weight=w+1, tooltip=f"Límite: {umb} dB").add_to(fg_isofonas)
 
 if activar_umbral_global:

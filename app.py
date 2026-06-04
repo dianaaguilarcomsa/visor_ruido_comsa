@@ -481,7 +481,6 @@ if tipo_malla == "Malla Fina (Intervalos 5dB)":
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                # Esta usa banda y tu opacidad personalizada
                 folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
 else:
     for umb, color, opacity, w in [(umbral_referencia - 20, "green", 0.1, 1), (umbral_referencia - 10, "orange", 0.2, 1), (umbral_referencia, "red", 0.3, 2)]:
@@ -498,7 +497,6 @@ else:
             geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
             for geom in geoms:
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-                # Esta es la básica, NO lleva banda, solo usa color y opacity
                 folium.Polygon(locations=coords_folium, color=color, fill=True, fill_opacity=opacity, weight=w+1, tooltip=f"Límite: {umb} dB").add_to(fg_isofonas)
 
 if activar_umbral_global:
@@ -515,7 +513,7 @@ if activar_umbral_global:
         geoms = [merged_poly] if merged_poly.geom_type == 'Polygon' else merged_poly.geoms
         for geom in geoms:
             coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
-            folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Línea de Ruido: {banda['min']} dB").add_to(fg_isofonas)
+            folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10", tooltip=f"Límite Común Voluntario: {umbral_referencia} dB").add_to(fg_isofonas)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -569,7 +567,6 @@ for f in focos:
     folium.Marker([lat, lon], icon=folium.Icon(color="black", icon="cog"), tooltip=f"📍 Foco Emisor: {nombre} | Potencia: {emision_foco:.1f} dB").add_to(fg_focos)
     if nombre:
         folium.Marker([lat, lon], icon=folium.DivIcon(html=f'<div style="{css_texto}">{nombre}<br>({emision_foco:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
-
 Draw(
     export=False, 
     draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False},

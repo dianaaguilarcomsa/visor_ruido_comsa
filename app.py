@@ -68,7 +68,7 @@ malla_fina_config = [
     {"min": 80, "color": "#295180"}
 ]
 
-# --- NUEVA BASE DE DATOS PARAMÉTRICA DE CONTAMINACIÓN (POLVO) ---
+# --- BASE DE DATOS PARAMÉTRICA DE CONTAMINACIÓN (POLVO) ---
 actividades_polvo = {
     "Excavación y carga de tierras (Retro)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 2.0, "M_humedo": 8.0, "H": 2.0},
     "Descarga de balasto (Vagón/Tolva)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 1.0, "M_humedo": 4.0, "H": 1.5},
@@ -107,7 +107,7 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
         feature["properties"]["umbral"] = 65.0
         feature["properties"]["uso_nombre"] = "Residencial"
         
-    # --- NUEVAS PROPIEDADES EXCLUSIVAS DE POLVO ---
+    # --- PROPIEDADES EXCLUSIVAS DE POLVO ---
     if tipo == "Point" and "actividad_polvo" not in feature["properties"]:
         feature["properties"]["actividad_polvo"] = "Excavación y carga de tierras (Retro)"
     if tipo == "Point" and "terreno_regado" not in feature["properties"]:
@@ -218,7 +218,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         coords.append([foco_lat + d_lat_final, foco_lon + d_lon_final])
     return coords
 
-# --- NUEVAS FUNCIONES: ALGORITMO GAUSSIANO COMPLETO PARA CALIDAD DEL AIRE ---
+# --- ALGORITMO GAUSSIANO COMPLETO PARA CALIDAD DEL AIRE ---
 def calcular_emision_polvo(actividad, esta_regado, u_viento):
     datos = actividades_polvo.get(actividad, actividades_polvo["Excavación y carga de tierras (Retro)"])
     if datos["metodo"] == "factor_fijo":
@@ -240,35 +240,29 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         dist = distancia_haversine(f["lat"], f["lon"], lat_dest, lon_dest)
         if dist < 1.0: continue
         
-        # Calcular rumbo (bearing) desde el foco hasta el receptor
         dLon = math.radians(lon_dest - f["lon"])
         lat1, lat2 = math.radians(f["lat"]), math.radians(lat_dest)
         y = math.sin(dLon) * math.cos(lat2)
         x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon)
         bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
         
-        # Hacia dónde viaja físicamente el contaminante (dirección opuesta a de dónde viene)
         dir_pluma = (dir_viento_desde + 180) % 360
         angulo_relativo = math.radians(bearing - dir_pluma)
         
-        # Proyecciones Gaussiana (dx: eje del viento, dy: eje transversal)
         dx = dist * math.cos(angulo_relativo)
         dy = dist * math.sin(angulo_relativo)
         
-        if dx <= 0: continue # El punto se encuentra a barlovento (detrás del foco)
+        if dx <= 0: continue 
         
-        # Coeficientes de dispersión empíricos basados en estabilidad neutra (Clase D)
         sigma_y = max(0.08 * dx * (1 + 0.0001 * dx)**(-0.5), 0.01)
         sigma_z = max(0.06 * dx * (1 + 0.0015 * dx)**(-0.5), 0.01)
         
-        z = 1.5 # Cota estándar ingenieril (altura de respiración humana)
+        z = 1.5 
         
-        # Ecuación empírica con reflejo perfecto en el suelo
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
         disp_horiz = math.exp(-(dy**2) / (2 * sigma_y**2))
         disp_vert = math.exp(-((z - H)**2) / (2 * sigma_z**2)) + math.exp(-((z + H)**2) / (2 * sigma_z**2))
         
-        # Convertimos g/m3 a microgramos/m3 (ug/m3) multiplicando por 1.000.000
         concentracion += (term_central * disp_horiz * disp_vert) * 1000000
         
     return concentracion
@@ -332,7 +326,6 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
 with st.sidebar:
     st.title("⚙️ Panel de Control")
 
-    # --- NUEVO INTERRUPTOR MAESTRO DE ANÁLISIS ---
     modo_visor = st.radio("TIPO DE ANÁLISIS AMBIENTAL:", ["🔊 Vectores de Ruido", "💨 Calidad del Aire (Polvo PM10)"], index=0)
     st.write("---")
 
@@ -377,6 +370,7 @@ with st.sidebar:
                     else: st.error("Archivo vacío.")
                 except Exception as e: st.error(f"Error: {e}")
 
+    # --- LEYENDA SIOSE RESTAURADA EXACTAMENTE IGUAL ---
     with st.expander("📚 Leyendas Capas Oficiales (SIOSE / ADIF)", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
         st.markdown("""
@@ -387,10 +381,13 @@ with st.sidebar:
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #CC0066; margin-right: 8px; border: 1px solid #ccc;"></div><b>Granate:</b> Infraestructuras de Transporte / Ejes ADIF</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFA6FF; margin-right: 8px; border: 1px solid #ccc;"></div><b>Rosa:</b> Dotacional, sanitario, docente (60 dB)</div>
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #A6FF80; margin-right: 8px; border: 1px solid #ccc;"></div><b>Verde Pistacho:</b> Zonas verdes y deportivas</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #E6CCCC; margin-right: 8px; border: 1px solid #ccc;"></div><b>Gris/Marrón:</b> Zonas en obras o extracción</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #FFFFA8; margin-right: 8px; border: 1px solid #ccc;"></div><b>Amarillo:</b> Tierras de cultivo y labor</div>
+            <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
         </div>
         """, unsafe_allow_html=True)
+        st.info("💡 **Consejo:** Para encender o apagar las capas, utiliza el **icono de capas 📚 arriba a la derecha en el mapa**.")
 
-    # --- CAMBIO DINÁMICO DE CONFIGURACIÓN SEGÚN MODO ---
     if modo_visor == "🔊 Vectores de Ruido":
         with st.expander("📜 Fondo de Isófonas Global", expanded=True):
             tipo_malla = st.radio("Estilo de Visualización:", ["Malla Básica (Semáforo)", "Malla Fina (Intervalos 5dB)"])
@@ -400,6 +397,7 @@ with st.sidebar:
     else:
         with st.expander("🌤️ Dinámica Meteorológica Local", expanded=True):
             st.caption("Configuración manual de la atmósfera (Simulación local).")
+            # AQUÍ ES DONDE ESTABA EL ERROR DEL NOMBRE DE LA VARIABLE. AHORA ES viento_velocidad.
             viento_velocidad = st.slider("Velocidad del viento (u) en m/s:", min_value=0.5, max_value=15.0, value=3.5, step=0.5)
             viento_direccion = st.slider("El viento sopla DESDE (Dirección):", min_value=0, max_value=350, value=270, step=10, help="0=Norte, 90=Este, 180=Sur, 270=Oeste")
             st.caption(f"Dirección física de arrastre de la pluma: **{(viento_direccion + 180) % 360}º**")
@@ -422,7 +420,6 @@ with st.sidebar:
                 
                 if tipo == "Point":
                     if modo_visor == "🔊 Vectores de Ruido":
-                        # Conserva la asignación original intacta para ruido
                         for m, db in list(props["maq"].items()):
                             col_m, col_b = st.columns([3, 1])
                             col_m.caption(f"• {m}: {db} dB")
@@ -441,7 +438,6 @@ with st.sidebar:
                             props["maq"][m_nom] = m_db; st.rerun()
                         st.write(f"Potencia Foco: **{sumar_decibelios(props['maq']):.1f} dB**")
                     else:
-                        # --- INTERFAZ EXCLUSIVA PARA EL MODO POLVO ---
                         act_actual = props.get("actividad_polvo", "Excavación y carga de tierras (Retro)")
                         act_index = list(actividades_polvo.keys()).index(act_actual) if act_actual in actividades_polvo else 0
                         sel_act = st.selectbox("Actividad de Obra:", list(actividades_polvo.keys()), index=act_index, key=f"polvo_act_{idx}")
@@ -490,7 +486,6 @@ with st.sidebar:
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
 
-# Extracción estructurada de geometrías de la sesión
 focos = []
 pantallas_data = []
 poblaciones = []
@@ -502,7 +497,6 @@ for feature in st.session_state["mis_dibujos"]:
     props = feature["properties"]
     if tipo == "Point":
         focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
-        # Estructura paralela para los focos de polvo sin interferir con ruido
         q_v, h_v = calcular_emision_polvo(props.get("actividad_polvo"), props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
         focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v})
     elif tipo == "LineString":
@@ -528,7 +522,6 @@ Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters').add_to(m)
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
-# Servidores WMS intactos
 folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", name="🌲 Espacios Protegidos CDDA", fmt="image/png", transparent=True, opacity=0.8, overlay=True, show=False).add_to(m)
@@ -543,9 +536,6 @@ pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
 focos_json = json.dumps(focos, default=safe_serialize)
 css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
 
-# ==========================================
-# BLOQUE 1: RENDERIZADO ORIGINAL DE RUIDO (INTACTO)
-# ==========================================
 if modo_visor == "🔊 Vectores de Ruido":
     if tipo_malla == "Malla Fina (Intervalos 5dB)":
         for banda in malla_fina_config:
@@ -596,18 +586,13 @@ if modo_visor == "🔊 Vectores de Ruido":
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
                 folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10").add_to(fg_resultados_ruido)
 
-# ==========================================
-# BLOQUE 2: NUEVO RECUADRO DE DISPERSIÓN DE POLVO PM10 (MALLA CUADRICULADA DINÁMICA)
-# ==========================================
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        # 1. Bounding Box dinámico alrededor de las máquinas con un margen técnico de ~400 metros
         min_lat = min(f["lat"] for f in focos_aire) - 0.004
         max_lat = max(f["lat"] for f in focos_aire) + 0.004
         min_lon = min(f["lon"] for f in focos_aire) - 0.005
         max_lon = max(f["lon"] for f in focos_aire) + 0.005
         
-        # 2. Tamaño del cuadradito de la rejilla (Resolución espacial equilibrada de ~15 metros)
         step_lat = 0.00015
         step_lon = 0.00020
         
@@ -615,26 +600,24 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
         while lat_i <= max_lat:
             lon_i = min_lon
             while lon_i <= max_lon:
-                # Evaluar las matemáticas en el nodo central del cuadradito de malla
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_veloc, viento_direccion)
+                # AQUI ESTA CORREGIDA LA VARIABLE DEL VIENTO
+                concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                 
-                # Renderizado cromático según niveles de inmisión de polvo (µg/m³)
                 if concentracion_nodo > 10.0:
-                    if concentracion_nodo > 150.0: color_bloque = "#800000"    # Crítico / Muy Alto
-                    elif concentracion_nodo > 50.0: color_bloque = "#FF0000"   # Supera Umbral Diario Legal OMS
-                    elif concentracion_nodo > 35.0: color_bloque = "#FF8C00"   # Alerta Media
-                    elif concentracion_nodo > 20.0: color_bloque = "#FFD700"   # Concentración Moderada
-                    else: color_bloque = "#FFFFE0"                             # Fondo Ligero
+                    if concentracion_nodo > 150.0: color_bloque = "#800000"
+                    elif concentracion_nodo > 50.0: color_bloque = "#FF0000"
+                    elif concentracion_nodo > 35.0: color_bloque = "#FF8C00"
+                    elif concentracion_nodo > 20.0: color_bloque = "#FFD700"
+                    else: color_bloque = "#FFFFE0"
                     
                     caja_limites = [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]]
                     folium.Rectangle(bounds=caja_limites, color=color_bloque, fill=True, fill_color=color_bloque, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {concentracion_nodo:.1f} µg/m³").add_to(fg_resultados_aire)
                 lon_i += step_lon
             lat_i += step_lat
 
-# Procesamiento espacial de núcleos poblacionales
 for pob in poblaciones:
     poly_coords = pob["coords"]
     nombre = pob["name"]
@@ -669,15 +652,14 @@ for pob in poblaciones:
         if supera_umbral: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Incumple {umbral_pob}dB)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({ruido_total:.1f} dB / {umbral_pob} dB)</span></div>'
     else:
-        # Evaluación de salud en el centro de la población para polvo
-        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_veloc, viento_direccion)
+        # AQUI TAMBIEN ESTA CORREGIDA LA VARIABLE DEL VIENTO
+        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede límite OMS: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         
     folium.Polygon(locations=[[lat, lon] for lon, lat in poly_coords], color=color_pob, fill=True, fill_opacity=0.35, weight=2).add_to(fg_poblaciones)
     if nombre: folium.Marker([c_lat, c_lon], icon=folium.DivIcon(html=html, icon_size=(250, 60), icon_anchor=(125, 30))).add_to(fg_poblaciones)
 
-# Renderizado estricto de las pantallas acústicas
 for p in pantallas_data:
     pant_coord = p["coords"]
     nombre, aten = p["name"], p["aten"]
@@ -687,7 +669,6 @@ for p in pantallas_data:
     if nombre and modo_visor == "🔊 Vectores de Ruido":
         folium.Marker([pant_coord[len(pant_coord)//2][1], pant_coord[len(pant_coord)//2][0]], icon=folium.DivIcon(html=f'<div style="{css_texto} text-align: center;">{nombre}<br>({aten:.1f} dB)</div>', icon_size=(150, 30), icon_anchor=(75, -10))).add_to(fg_pantallas)
 
-# Marcadores para los Focos de obra
 for idx, f in enumerate(st.session_state["mis_dibujos"]):
     if f["geometry"]["type"] == "Point":
         coords = f["geometry"]["coordinates"]
@@ -704,7 +685,7 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- PANEL DE LEYENDA FLOTANTE INTEGRADO Y SEAMLESS ---
+# --- LEYENDAS EEA RESTAURADAS EXACTAMENTE IGUAL ---
 escala_ruido_html = """
 <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
 <div style="display: flex; flex-wrap: wrap;">
@@ -737,16 +718,24 @@ escala_activa = escala_ruido_html if modo_visor == "🔊 Vectores de Ruido" else
 
 leyendas_html = f"""
 <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
-    <b>⚙️ Elementos Activos:</b> | 〰️ Barrera | ⬟ Núcleo Receptor | 📍 Máquina de Obra
+    <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 30px; left: 60px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 240px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
+<div style="position: absolute; bottom: 30px; left: 60px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 230px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
     <div>
         {escala_activa}
     </div>
     <div>
-        <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA / SIOSE)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> Red Natura (Hábitats)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #FF8888; margin-right: 5px;"></span> ZEPA (Protección Aves)</div>
+        <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> LIC/ZEC (Hábitats)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #FF8888; margin-right: 5px;"></span> ZEPA (Aves)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #333; margin-right: 5px;"></span> LIC + ZEPA</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#7CFC00; border:1px solid #999; margin-right: 5px;"></span> Reserva Estricta (Ia)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Área Silvestre (Ib)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional (II)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural (III)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat (IV)</div>
+        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Protegido (V)</div>
+        <div style="display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Área Uso Sost. (VI)</div>
     </div>
 </div>
 """
@@ -760,7 +749,6 @@ m.get_root().header.add_child(folium.Element(estilos_capas))
 
 map_output = st_folium(m, width=1200, height=650, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
 
-# Captura de trazos e inyección dinámica al estado de sesión intacta
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]
     geom_nueva_str = json.dumps(nuevo_dibujo.get("geometry"), sort_keys=True, default=safe_serialize)

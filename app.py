@@ -9,6 +9,7 @@ import json
 import re
 import xml.etree.ElementTree as ET
 import pandas as pd
+import requests
 from branca.element import Template, MacroElement
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
@@ -45,18 +46,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def safe_serialize(obj):
-    if hasattr(obj, 'coords'):
-        return list(obj.coords)
+    if hasattr(obj, 'coords'): return list(obj.coords)
     return str(obj)
 
-if "mis_dibujos" not in st.session_state:
-    st.session_state["mis_dibujos"] = []
-if "map_version" not in st.session_state:
-    st.session_state["map_version"] = 0
-if "map_center" not in st.session_state:
-    st.session_state["map_center"] = [40.4410, -3.6908]
-if "map_zoom" not in st.session_state:
-    st.session_state["map_zoom"] = 15
+if "mis_dibujos" not in st.session_state: st.session_state["mis_dibujos"] = []
+if "map_version" not in st.session_state: st.session_state["map_version"] = 0
+if "map_center" not in st.session_state: st.session_state["map_center"] = [40.4410, -3.6908]
+if "map_zoom" not in st.session_state: st.session_state["map_zoom"] = 15
 
 # ==========================================
 # BASE DE DATOS E INICIALIZACIÓN
@@ -91,11 +87,26 @@ actividades_polvo = {
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
+# MEDIDAS PREVENTIVAS TEXTUALES Y MATEMÁTICAS (RD 102/2011 y EIA)
 opciones_medidas = [
-    "💧 Riego periódico (Terreno húmedo)",
-    "🚷 Limitación de velocidad a 10 km/h",
-    "💨 Cañones nebulizadores de agua (Abatimiento)"
+    "💧 Riego periódico de tierras y acopios (2/día)",
+    "🚷 Control de velocidad a 30 km/h en obra",
+    "🚚 Transporte de material tapado y sin derrames",
+    "🔧 Ajuste de motores y registro ITV al día",
+    "💨 Equipos de perforación con captadores de polvo",
+    "🚿 Lavado de ruedas a la salida (Lavarruedas)"
 ]
+
+@st.cache_data(ttl=900)
+def obtener_clima_actual_api(lat, lon):
+    try:
+        url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true"
+        r = requests.get(url, timeout=3).json()
+        u = r["current_weather"]["windspeed"] / 3.6 # km/h a m/s
+        d = r["current_weather"]["winddirection"]
+        return float(u), float(d)
+    except:
+        return 3.5, 270.0 # Valores refugio si falla la conexión
 
 @st.cache_data
 def cargar_maquinas():
@@ -234,10 +245,12 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     q_total = 0.0
     h_max = 0.5
     
-    # Análisis de Medidas Correctoras Globales al Foco
-    aplica_riego = "💧 Riego periódico (Terreno húmedo)" in medidas
-    aplica_velocidad = "🚷 Limitación de velocidad a 10 km/h" in medidas
-    aplica_nebulizador = "💨 Cañones nebulizadores de agua (Abatimiento)" in medidas
+    # Análisis de Medidas Correctoras
+    aplica_riego = "💧 Riego periódico de tierras y acopios (2/día)" in medidas
+    aplica_velocidad = "🚷 Control de velocidad a 30 km/h en obra" in medidas
+    aplica_tapado = "🚚 Transporte de material tapado y sin derrames" in medidas
+    aplica_captador = "💨 Equipos de perforación con captadores de polvo" in medidas
+    aplica_lavarruedas = "🚿 Lavado de ruedas a la salida (Lavarruedas)" in medidas
 
     for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
@@ -246,17 +259,21 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
             if aplica_riego: q = q * datos["red_humedad"]
-            if aplica_velocidad and "Tránsito" in act: q = q * 0.35 # 65% de reducción por ir despacio
+            
+            if "Tránsito" in act:
+                if aplica_velocidad: q = q * 0.6 # Reducción 40%
+                if aplica_lavarruedas and "públicas" in act: q = q * 0.2 # 80% reducción de resuspensión fuera de obra
+                
+            if "Perforación" in act and aplica_captador: q = q * 0.15 # 85% de reducción
+            
         elif datos["metodo"] == "formula_caida":
             M = datos["M_humedo"] if aplica_riego else datos["M_seco"]
             k = datos["k"]
-            q = k * 0.0016 * ((u_viento / 2.2)**1.3) / ((M / 2.0)**1.4)
+            q = k * 0.0016 * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
+            
+            if "Descarga" in act and aplica_tapado: q = q * 0.7 # 30% menos de pérdida
             
         h = datos["H"]
-        
-        # 2. Medidas de Abatimiento Final (Nebulizadores)
-        if aplica_nebulizador: q = q * 0.25 # Eficiencia del 75% atrapando partículas en el aire
-
         q_total += q
         h_max = max(h_max, h)
         
@@ -280,14 +297,25 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         dir_pluma = (dir_viento_desde + 180) % 360
         angulo_relativo = math.radians(bearing - dir_pluma)
         
-        dx = dist * math.cos(angulo_relativo)
-        dy = dist * math.sin(angulo_relativo)
+        # Proyecciones cartesianas relativas al viento
+        dx = dist * math.cos(angulo_relativo) # Eje del viento (+ es a favor, - es en contra)
+        dy = dist * math.sin(angulo_relativo) # Eje transversal
         
-        if dx <= 0: continue 
+        # NUEVO: Modelado de Fuente de Volumen (AERMOD approach) para obras
+        # Esto genera la forma de abanico y el bulbo trasero que ves en tus planos profesionales
+        sigma_y0 = 15.0 # Ensanchamiento inicial de la obra
+        sigma_z0 = 5.0
         
-        # SE HA AUMENTADO EL FACTOR MULTIPLICADOR DE SIGMA_Y PARA ENSANCHAR LA PLUMA (Simulando Meandering/Fluctuación)
-        sigma_y = max(0.18 * dx * (1 + 0.0001 * dx)**(-0.5), 0.01)
-        sigma_z = max(0.06 * dx * (1 + 0.0015 * dx)**(-0.5), 0.01)
+        if dx > 0:
+            sigma_y = sigma_y0 + 0.20 * dx * (1 + 0.0001 * dx)**(-0.5)
+            sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
+            decay_x = 1.0
+        else:
+            # Difusión hacia atrás (bulbo a barlovento) simulado con decaimiento rápido
+            if dx < -40: continue # Límite físico del bulbo trasero
+            sigma_y = sigma_y0
+            sigma_z = sigma_z0
+            decay_x = math.exp(-(dx**2) / (2 * 15.0**2))
         
         z = 1.5 
         
@@ -295,7 +323,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         disp_horiz = math.exp(-(dy**2) / (2 * sigma_y**2))
         disp_vert = math.exp(-((z - H)**2) / (2 * sigma_z**2)) + math.exp(-((z + H)**2) / (2 * sigma_z**2))
         
-        concentracion += (term_central * disp_horiz * disp_vert) * 1000000
+        concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
         
     return concentracion
 
@@ -326,7 +354,7 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
                 kml.append('</Placemark>')
             kml.append('</Folder>')
     elif modo == "polvo":
-        kml.append(f'<Placemark><name>Condiciones Meteorológicas</name><description>Velocidad Viento: {viento_u} m/s\nSopla desde: {viento_dir}º\nPluma hacia: {(viento_dir+180)%360}º</description><Point><coordinates>{st.session_state["map_center"][1]},{st.session_state["map_center"][0]},0</coordinates></Point></Placemark>')
+        kml.append(f'<Placemark><name>Meteorología del Cálculo</name><description>Velocidad Viento: {viento_u:.1f} m/s\nSopla desde: {viento_dir:.0f}º\nPluma se dirige a: {(viento_dir+180)%360:.0f}º</description><Point><coordinates>{st.session_state["map_center"][1]},{st.session_state["map_center"][0]},0</coordinates></Point></Placemark>')
         if polvo_grid:
             kml.append('<Folder><name>Malla de Dispersión PM10 (RD 102/2011)</name>')
             for celda in polvo_grid:
@@ -448,11 +476,20 @@ with st.sidebar:
             activar_umbral_global = st.checkbox("Mostrar línea de límite común voluntaria", value=True)
             umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
     else:
-        with st.expander("🌤️ Dinámica Meteorológica Local", expanded=True):
-            st.caption("Configuración manual de la atmósfera (Simulación local).")
-            viento_velocidad = st.slider("Velocidad del viento (u) en m/s:", min_value=0.5, max_value=15.0, value=3.5, step=0.5)
-            viento_direccion = st.slider("El viento sopla DESDE (Dirección):", min_value=0, max_value=350, value=270, step=10, help="0=Norte, 90=Este, 180=Sur, 270=Oeste")
-            st.caption(f"Dirección física de arrastre de la pluma: **{(viento_direccion + 180) % 360}º**")
+        with st.expander("🌤️ Meteorología y Viento", expanded=True):
+            origen_viento = st.radio("Origen de los datos:", ["🎛️ Manual (Deslizadores)", "📡 Tiempo Real (API Open-Meteo)"], index=0)
+            
+            if origen_viento == "📡 Tiempo Real (API Open-Meteo)":
+                lat_api, lon_api = st.session_state["map_center"]
+                u_real, dir_real = obtener_clima_actual_api(lat_api, lon_api)
+                st.success(f"Datos obtenidos para las coordenadas actuales.")
+                viento_velocidad = st.number_input("Velocidad detectada (m/s):", value=u_real, disabled=True)
+                viento_direccion = st.number_input("Dirección (º desde):", value=dir_real, disabled=True)
+            else:
+                viento_velocidad = st.slider("Velocidad del viento (u) en m/s:", min_value=0.5, max_value=15.0, value=3.5, step=0.5)
+                viento_direccion = st.slider("El viento sopla DESDE (Dirección):", min_value=0, max_value=350, value=270, step=10, help="0=Norte, 90=Este, 180=Sur, 270=Oeste")
+            
+            st.caption(f"Dirección física de arrastre de la pluma: **{(viento_direccion + 180) % 360:.0f}º**")
 
     with st.expander("🏷️ Configuración de Elementos", expanded=True):
         if not st.session_state["mis_dibujos"]: st.info("Dibuja elementos en el mapa para configurar sus propiedades.")
@@ -498,7 +535,7 @@ with st.sidebar:
                             props["actividades_polvo"] = sel_acts; st.rerun()
                             
                         medidas_actuales = props.get("medidas_polvo", [])
-                        sel_medidas = st.multiselect("Medidas Preventivas / Correctoras:", opciones_medidas, default=medidas_actuales, key=f"polvo_med_{idx}")
+                        sel_medidas = st.multiselect("Medidas Preventivas (RD 102/2011 y EIA):", opciones_medidas, default=medidas_actuales, key=f"polvo_med_{idx}")
                         if sel_medidas != medidas_actuales:
                             props["medidas_polvo"] = sel_medidas; st.rerun()
                         
@@ -753,14 +790,14 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
             if isinstance(act_list, str): act_list = [act_list]
             q_a, _ = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
             
-            icono_color = "blue" if med_list else "cloud"
+            icono_color = "blue" if med_list else "lightgray"
             folium.Marker([coords[1], coords[0]], icon=folium.Icon(color=icono_color, icon="info-sign"), tooltip=f"Foco: {props['name']} | Q: {q_a:.3f} g/s").add_to(fg_focos)
             folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({q_a:.3f} g/s)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
 
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- LEYENDAS REFORMADAS Y ANCLADAS ARRIBA/CENTRO PARA EVITAR CORTES ---
+# --- LEYENDAS CROMÁTICAS FLOTANTES (CSS CORREGIDO Y ANCLADAS ARRIBA A LA DERECHA) ---
 escala_ruido_html = """
 <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
 <div style="display: flex; flex-wrap: wrap;">
@@ -795,7 +832,7 @@ leyendas_html = f"""
 <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 50px; left: 60px; z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 250px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
+<div style="position: absolute; top: 100px; right: 20px; z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 250px; pointer-events: auto; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
     <div>
         {escala_activa}
     </div>

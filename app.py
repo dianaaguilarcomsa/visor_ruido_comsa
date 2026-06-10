@@ -35,8 +35,7 @@ st.markdown("""
     <div style="display: flex; flex-direction: column; align-items: flex-start; min-width: 120px;">
         <div style="display: flex; gap: 6px; margin-bottom: 2px;">
             <div style="width: 22px; height: 22px; background-color: #E3182D; border-radius: 50%;"></div>
-            <div style="width: 22px; height: 22px; background-color: #0093D0; border-radius: 50%;"></div>
-        </div>
+            <div style="width: 22px; height: 22px; background-color: #0093D0;"></div> </div>
         <div style="color: var(--text-color); font-size: 28px; font-weight: 900; line-height: 1; letter-spacing: -1px;">COMSA</div>
         <div style="color: var(--text-color); opacity: 0.8; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;">CORPORACIÓN</div>
     </div>
@@ -452,7 +451,6 @@ with st.sidebar:
             <div style="display: flex; align-items: center; margin-bottom: 4px;"><div style="min-width: 15px; height: 15px; background: #00CCF2; margin-right: 8px; border: 1px solid #ccc;"></div><b>Azul:</b> Cursos de agua y zonas húmedas</div>
         </div>
         """, unsafe_allow_html=True)
-        st.info("💡 **Consejo:** Para encender o apagar las capas, utiliza el **icono de capas 📚 arriba a la derecha en el mapa**.")
 
     if modo_visor == "🔊 Vectores de Ruido":
         with st.expander("📜 Fondo de Isófonas Global", expanded=True):
@@ -462,7 +460,8 @@ with st.sidebar:
             umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
     else:
         with st.expander("🌤️ Meteorología y Viento", expanded=True):
-            origen_viento = st.radio("Origen de los datos:", ["🎛️ Manual (Deslizadores)", "📡 Tiempo Real (API Open-Meteo)"], index=0)
+            # VIENTO EN TIEMPO REAL POR DEFECTO (index=0)
+            origen_viento = st.radio("Origen de los datos meteorológicos:", ["📡 Tiempo Real (API Open-Meteo)", "🎛️ Manual (Deslizadores)"], index=0)
             if origen_viento == "📡 Tiempo Real (API Open-Meteo)":
                 lat_api, lon_api = st.session_state["map_center"]
                 u_real, dir_real = obtener_clima_actual_api(lat_api, lon_api)
@@ -552,7 +551,8 @@ with st.sidebar:
         coords = feature["geometry"]["coordinates"]
         props = feature["properties"]
         if tipo == "Point":
-            focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
+            # SE AÑADE 'maq' COMPLETO PARA EL INFORME DE RUIDO
+            focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"]), "maq": props.get("maq", {})})
             act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
             med_list = props.get("medidas_polvo", [])
             if isinstance(act_list, str): act_list = [act_list]
@@ -569,48 +569,84 @@ with st.sidebar:
                 kmz_data = generar_kmz(focos, pantallas_data, poblaciones, [], modo="ruido")
                 st.download_button("⬇️ Descargar KMZ (Ruido)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
                 
-                # --- NUEVO: INFORME DE RUIDO ---
+                # --- NUEVO Y MEJORADO: INFORME DE RUIDO PROFESIONAL ---
                 informe_ruido = "ESTUDIO ACÚSTICO: VECTORES DE RUIDO. FASE DE OBRA\n"
                 informe_ruido += "="*65 + "\n\n"
                 informe_ruido += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                
                 informe_ruido += "1. MARCO LEGAL Y METODOLOGÍA\n"
                 informe_ruido += "-"*55 + "\n"
                 informe_ruido += "Legislación de referencia: Ley 37/2003, del Ruido y Real Decreto 1367/2007.\n"
-                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores con atenuación por divergencia geométrica y difracción por obstáculos o pantallas acústicas.\n\n"
+                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores evaluando atenuación por divergencia geométrica y difracción/absorción por pantallas acústicas interpuestas.\n\n"
+                
                 informe_ruido += "2. INVENTARIO DE FOCOS SONOROS (MAQUINARIA)\n"
                 informe_ruido += "-"*55 + "\n"
                 if focos:
-                    for f in focos: informe_ruido += f" - Foco '{f['name']}': Emisión Acústica de {f['emision']:.1f} dB(A)\n"
-                else: informe_ruido += " No se han modelizado focos sonoros.\n"
+                    for i, f in enumerate(focos):
+                        informe_ruido += f"Foco {i+1}: {f['name']}\n"
+                        informe_ruido += f"  - Emisión Acústica Total Combinada: {f['emision']:.1f} dB(A)\n"
+                        if f['maq']:
+                            informe_ruido += "  - Maquinaria operativa en este foco (Nivel de potencia sonora Lw):\n"
+                            for m_name, m_db in f['maq'].items():
+                                informe_ruido += f"      * {m_name}: {m_db} dB(A)\n"
+                        else:
+                            informe_ruido += "  - Maquinaria operativa: No especificada manualmente.\n"
+                        informe_ruido += "\n"
+                else: 
+                    informe_ruido += " No se han modelizado focos sonoros.\n\n"
                 
-                informe_ruido += "\n3. MEDIDAS CORRECTORAS (PANTALLAS ACÚSTICAS)\n"
+                informe_ruido += "3. MEDIDAS CORRECTORAS (PANTALLAS ACÚSTICAS)\n"
                 informe_ruido += "-"*55 + "\n"
                 if pantallas_data:
-                    for p in pantallas_data: informe_ruido += f" - Barrera '{p['name']}': Atenuación teórica configurada de {p['aten']} dB(A)\n"
-                else: informe_ruido += " No se han dispuesto pantallas acústicas para esta simulación.\n"
+                    for p in pantallas_data: 
+                        informe_ruido += f" - Barrera '{p['name']}': Atenuación teórica configurada de {p['aten']} dB(A)\n"
+                else: 
+                    informe_ruido += " No se han dispuesto pantallas acústicas para esta simulación.\n"
                 
-                informe_ruido += "\n4. AFECCIÓN A RECEPTORES SENSIBLES (ZONAS DE POBLACIÓN)\n"
+                informe_ruido += "\n4. AFECCIÓN A RECEPTORES SENSIBLES (POBLACIÓN)\n"
                 informe_ruido += "-"*55 + "\n"
                 if poblaciones:
                     for pob in poblaciones:
-                        c_lon, c_lat = ShapelyPolygon(pob["coords"]).centroid.x, ShapelyPolygon(pob["coords"]).centroid.y
-                        r_parciales = []
-                        for f in focos:
-                            if f["emision"] <= 0: continue
-                            dist = distancia_haversine(f["coords"][1], f["coords"][0], c_lat, c_lon)
-                            lv = LineString([(f["coords"][0], f["coords"][1]), (c_lon, c_lat)])
-                            at_ap = 0
-                            for p in pantallas_data:
-                                if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
-                            ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
-                            r_parciales.append(ruido_foco)
-                        ruido_total_rec = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
-                        estado = "INCUMPLE" if ruido_total_rec > pob['umbral'] else "CUMPLE"
-                        informe_ruido += f" - Receptor: {pob['name']}\n"
-                        informe_ruido += f"   * Límite Legal Aplicado: {pob['umbral']} dB(A) ({pob['uso_nombre']})\n"
-                        informe_ruido += f"   * Nivel de Inmisión Estimado: {ruido_total_rec:.1f} dB(A)\n"
-                        informe_ruido += f"   * Estado Normativo: {estado}\n\n"
-                else: informe_ruido += " No se han modelizado núcleos receptores sensibles.\n"
+                        poly_coords = pob["coords"]
+                        c_lon, c_lat = ShapelyPolygon(poly_coords).centroid.x, ShapelyPolygon(poly_coords).centroid.y
+                        max_ruido = 0
+                        # Lógica corregida para buscar el máximo ruido en los límites y el centro
+                        puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
+                        for pt in puntos_eval:
+                            r_parciales = []
+                            for f in focos:
+                                if f["emision"] <= 0: continue
+                                dist = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                                lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
+                                at_ap = 0
+                                for p in pantallas_data:
+                                    if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
+                                ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
+                                r_parciales.append(ruido_foco)
+                            r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
+                            if r_tot > max_ruido: max_ruido = r_tot
+                            
+                        supera_umbral = False
+                        if max_ruido > pob['umbral']: 
+                            supera_umbral = True
+                        else:
+                            # Verificación geométrica definitiva con isófona
+                            for f in focos:
+                                if f["emision"] <= 0: continue
+                                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
+                                if len(iso_coords_limite) >= 3:
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
+                                    if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
+                                    if ShapelyPolygon(poly_coords).intersects(iso_poly): 
+                                        supera_umbral = True; break
+
+                        estado = "INCUMPLE (Supera límite legal)" if supera_umbral else "CUMPLE"
+                        informe_ruido += f" - Receptor Analizado: {pob['name']}\n"
+                        informe_ruido += f"   * Uso del Suelo: {pob['uso_nombre']} (Límite Legal: {pob['umbral']} dB)\n"
+                        informe_ruido += f"   * Ruido Máximo Estimado en Fachada/Límite: {max_ruido:.1f} dB(A)\n"
+                        informe_ruido += f"   * ESTADO NORMATIVO: {estado}\n\n"
+                else: 
+                    informe_ruido += " No se han modelizado núcleos receptores sensibles.\n"
                 
                 st.write("---")
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
@@ -642,7 +678,6 @@ with st.sidebar:
                 kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
                 st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
                 
-                # --- INFORME DE POLVO MEJORADO CON EL ESTUDIO EN PDF ---
                 st.write("---")
                 informe_txt = "ESTUDIO ATMOSFÉRICO: POLVO Y PARTÍCULAS PM10. FASE DE OBRA\n"
                 informe_txt += "="*65 + "\n\n"
@@ -670,14 +705,14 @@ with st.sidebar:
                         for a in f['actividades']: informe_txt += f"      * {a}\n"
                         
                         if f['medidas']:
-                            informe_txt += f"  - Medidas preventivas activas:\n"
+                            informe_txt += f"  - Medidas preventivas activas y factor de reducción:\n"
                             for m in f['medidas']: informe_txt += f"      * {m}\n"
                         else:
                             informe_txt += f"  - Medidas preventivas activas: NINGUNA\n"
                         
                         q_base_foco, _ = calcular_emision_polvo_lista(f['actividades'], [], viento_velocidad)
-                        informe_txt += f"  - Tasa de Emisión Base: {q_base_foco:.3f} g/s\n"
-                        informe_txt += f"  - Tasa de Emisión Final (Tras aplicar eficiencia de medidas): {f['Q']:.3f} g/s\n\n"
+                        informe_txt += f"  - Tasa de Emisión Base bruta: {q_base_foco:.3f} g/s\n"
+                        informe_txt += f"  - Tasa de Emisión Neta (Tras aplicar eficiencia de medidas): {f['Q']:.3f} g/s\n\n"
                 else: informe_txt += " No se han modelizado focos emisores de polvo.\n\n"
                 
                 informe_txt += "4. LÍMITES NORMATIVOS Y CONCLUSIONES\n"
@@ -816,21 +851,26 @@ for pob in poblaciones:
     c_lon, c_lat = shapely_poly.centroid.x, shapely_poly.centroid.y
     
     if modo_visor == "🔊 Vectores de Ruido":
-        ruidos_parciales = []
-        for f in focos:
-            flon, flat = f["coords"]
-            if f["emision"] <= 0: continue
-            dist = distancia_haversine(flat, flon, c_lat, c_lon)
-            linea_vision = LineString([(flon, flat), (c_lon, c_lat)])
-            aten_aplicada = 0
-            for p in pantallas_data:
-                if linea_vision.intersects(LineString(p["coords"])): aten_aplicada = max(aten_aplicada, p["aten"])
-            ruido = f["emision"] - 20 * math.log10(dist) - aten_aplicada if dist > 1 else f["emision"] - aten_aplicada
-            ruidos_parciales.append(ruido)
-        ruido_total = 10 * math.log10(sum(10 ** (r / 10) for r in ruidos_parciales)) if ruidos_parciales else 0
-        
+        # --- NUEVA LOGICA DE EVALUACIÓN ESPACIAL DE POBLACIONES (MÁXIMO RUIDO + INTERSECCIÓN) ---
+        max_ruido = 0
+        puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
+        for pt in puntos_eval:
+            r_parciales = []
+            for f in focos:
+                if f["emision"] <= 0: continue
+                dist = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
+                at_ap = 0
+                for p in pantallas_data:
+                    if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
+                ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
+                r_parciales.append(ruido_foco)
+            r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
+            if r_tot > max_ruido: max_ruido = r_tot
+            
         supera_umbral = False
-        if ruido_total > umbral_pob: supera_umbral = True
+        if max_ruido > umbral_pob: 
+            supera_umbral = True
         else:
             for f in focos:
                 if f["emision"] <= 0: continue
@@ -838,9 +878,16 @@ for pob in poblaciones:
                 if len(iso_coords_limite) >= 3:
                     iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
-                    if shapely_poly.intersects(iso_poly): supera_umbral = True; break
-        if supera_umbral: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Incumple {umbral_pob}dB)</span></div>'
-        else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({ruido_total:.1f} dB / {umbral_pob} dB)</span></div>'
+                    if shapely_poly.intersects(iso_poly): 
+                        supera_umbral = True
+                        break
+
+        if supera_umbral: 
+            color_pob = "red"
+            html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Incumple {umbral_pob}dB)</span></div>'
+        else: 
+            color_pob = "green"
+            html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">(Cumple. Max: {max_ruido:.1f} dB)</span></div>'
     else:
         polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102/2011: {polvo_centro:.1f}µg)</span></div>'
@@ -879,7 +926,7 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- NUEVA LEYENDA HORIZONTAL FLOTANTE ANCLADA AL CENTRO INFERIOR ---
+# --- NUEVA LEYENDA HORIZONTAL FLOTANTE ANCLADA AL VIEWPORT CON POSITION: FIXED ---
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
@@ -932,11 +979,12 @@ columna_eea_html = """
 
 escala_activa = escala_ruido_html if modo_visor == "🔊 Vectores de Ruido" else escala_polvo_html
 
+# USANDO POSITION: FIXED PARA ANCLARLO A LA VENTANA Y QUE NO SE HUNDA EN EL IFRAME
 leyendas_html = f"""
-<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
+<div style="position: fixed; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.1); pointer-events: auto; display: flex; flex-direction: row; align-items: stretch; max-width: 90vw;">
+<div style="position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; box-shadow: 0 4px 15px rgba(0,0,0,0.1); pointer-events: auto; display: flex; flex-direction: row; align-items: stretch; max-width: 90vw;">
     {escala_activa}
     {columna_eea_html}
 </div>

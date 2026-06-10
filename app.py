@@ -58,7 +58,9 @@ if "map_center" not in st.session_state:
 if "map_zoom" not in st.session_state:
     st.session_state["map_zoom"] = 15
 
-# Configuration de malla de ruido original
+# ==========================================
+# BASE DE DATOS E INICIALIZACIÓN
+# ==========================================
 malla_fina_config = [
     {"min": 30, "color": "#00FF00"}, {"min": 35, "color": "#66B24D"},
     {"min": 40, "color": "#99CC33"}, {"min": 45, "color": "#D8F2A0"},
@@ -68,15 +70,25 @@ malla_fina_config = [
     {"min": 80, "color": "#295180"}
 ]
 
-# --- BASE DE DATOS PARAMÉTRICA DE CONTAMINACIÓN (POLVO) ---
+# Base de datos completa ampliada
 actividades_polvo = {
-    "Excavación y carga de tierras (Retro)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 2.0, "M_humedo": 8.0, "H": 2.0},
-    "Descarga de balasto (Vagón/Tolva)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 1.0, "M_humedo": 4.0, "H": 1.5},
-    "Desmonte pesado (Bulldozer)": {"metodo": "factor_fijo", "base_g_s": 1.50, "red_humedad": 0.50, "H": 1.0},
-    "Nivelación de plataformas (Motoniveladora)": {"metodo": "factor_fijo", "base_g_s": 0.85, "red_humedad": 0.50, "H": 1.0},
-    "Tránsito pesado por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 2.80, "red_humedad": 0.30, "H": 0.5},
+    "Desbroce y limpieza del terreno": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 0.5},
     "Demolición mecánica de estructuras": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 3.0},
     "Fresado de pavimentos / Asfalto": {"metodo": "factor_fijo", "base_g_s": 0.95, "red_humedad": 0.40, "H": 0.2},
+    "Voladuras (Explosivos)": {"metodo": "factor_fijo", "base_g_s": 8.00, "red_humedad": 0.10, "H": 5.0},
+    "Perforación de pilotes / micropilotes": {"metodo": "factor_fijo", "base_g_s": 0.60, "red_humedad": 0.50, "H": 0.5},
+    "Desmonte pesado (Bulldozer)": {"metodo": "factor_fijo", "base_g_s": 1.50, "red_humedad": 0.50, "H": 1.0},
+    "Nivelación de plataformas (Motoniveladora)": {"metodo": "factor_fijo", "base_g_s": 0.85, "red_humedad": 0.50, "H": 1.0},
+    "Excavación y carga de tierras (Retro)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 2.0, "M_humedo": 8.0, "H": 2.0},
+    "Descarga de camiones (acopios)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 2.0, "M_humedo": 8.0, "H": 1.5},
+    "Compactación de tierras y subbases": {"metodo": "factor_fijo", "base_g_s": 1.10, "red_humedad": 0.50, "H": 0.5},
+    "Tránsito pesado por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 2.80, "red_humedad": 0.30, "H": 0.5},
+    "Tránsito ligero por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 0.80, "red_humedad": 0.40, "H": 0.5},
+    "Resuspensión en vías públicas pavimentadas": {"metodo": "factor_fijo", "base_g_s": 0.40, "red_humedad": 0.20, "H": 0.5},
+    "Corte de pavimentos / Hormigón": {"metodo": "factor_fijo", "base_g_s": 0.50, "red_humedad": 0.10, "H": 0.5},
+    "Chorro de arena (Sandblasting)": {"metodo": "factor_fijo", "base_g_s": 1.80, "red_humedad": 0.10, "H": 2.0},
+    "Cribado y machaqueo de áridos": {"metodo": "factor_fijo", "base_g_s": 3.50, "red_humedad": 0.50, "H": 2.5},
+    "Descarga de balasto (Vagón/Tolva)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 1.0, "M_humedo": 4.0, "H": 1.5},
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
@@ -90,7 +102,6 @@ def cargar_maquinas():
 df_maq = cargar_maquinas()
 lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
 
-# Inicialización y mantenimiento de propiedades de geometrías
 for idx, feature in enumerate(st.session_state["mis_dibujos"]):
     tipo = feature["geometry"]["type"]
     if "properties" not in feature: feature["properties"] = {}
@@ -98,7 +109,7 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
         prefix = "Foco" if tipo == "Point" else "Pantalla" if tipo == "LineString" else "Población"
         feature["properties"]["name"] = f"{prefix} {idx+1}"
     
-    # Propiedades exclusivas de Ruido
+    # Props de Ruido
     if tipo == "Point" and "maq" not in feature["properties"]:
         feature["properties"]["maq"] = {}
     if tipo == "LineString" and "aten" not in feature["properties"]:
@@ -107,12 +118,18 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
         feature["properties"]["umbral"] = 65.0
         feature["properties"]["uso_nombre"] = "Residencial"
         
-    # --- PROPIEDADES EXCLUSIVAS DE POLVO ---
-    if tipo == "Point" and "actividad_polvo" not in feature["properties"]:
-        feature["properties"]["actividad_polvo"] = "Excavación y carga de tierras (Retro)"
-    if tipo == "Point" and "terreno_regado" not in feature["properties"]:
-        feature["properties"]["terreno_regado"] = False
+    # Props de Polvo (Actualizado para permitir múltiples)
+    if tipo == "Point":
+        if "actividades_polvo" not in feature["properties"]:
+            old_act = feature["properties"].get("actividad_polvo")
+            if old_act: feature["properties"]["actividades_polvo"] = [old_act]
+            else: feature["properties"]["actividades_polvo"] = ["Excavación y carga de tierras (Retro)"]
+        if "terreno_regado" not in feature["properties"]:
+            feature["properties"]["terreno_regado"] = False
 
+# ==========================================
+# FUNCIONES MATEMÁTICAS
+# ==========================================
 def sumar_decibelios(dic_maq):
     if not dic_maq: return 0
     return 10 * math.log10(sum(10 ** (db / 10) for db in dic_maq.values()))
@@ -142,7 +159,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     coords = coord_tag.text.strip().split()
                     if coords:
                         lon, lat = map(float, coords[0].split(',')[:2])
-                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividad_polvo": "Excavación y carga de tierras (Retro)", "terreno_regado": False}})
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "terreno_regado": False}})
                         continue
             ls = placemark.find('.//LineString')
             if ls is not None:
@@ -218,18 +235,23 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         coords.append([foco_lat + d_lat_final, foco_lon + d_lon_final])
     return coords
 
-# --- ALGORITMO GAUSSIANO COMPLETO PARA CALIDAD DEL AIRE ---
-def calcular_emision_polvo(actividad, esta_regado, u_viento):
-    datos = actividades_polvo.get(actividad, actividades_polvo["Excavación y carga de tierras (Retro)"])
-    if datos["metodo"] == "factor_fijo":
-        Q = datos["base_g_s"]
-        if esta_regado: Q = Q * datos["red_humedad"]
-        return Q, datos["H"]
-    elif datos["metodo"] == "formula_caida":
-        M = datos["M_humedo"] if esta_regado else datos["M_seco"]
-        k = datos["k"]
-        Q = k * 0.0016 * ((u_viento / 2.2)**1.3) / ((M / 2.0)**1.4)
-        return Q, datos["H"]
+def calcular_emision_polvo_lista(actividades, esta_regado, u_viento):
+    q_total = 0.0
+    h_max = 0.5
+    for act in actividades:
+        datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
+        if datos["metodo"] == "factor_fijo":
+            q = datos["base_g_s"]
+            if esta_regado: q = q * datos["red_humedad"]
+            h = datos["H"]
+        elif datos["metodo"] == "formula_caida":
+            M = datos["M_humedo"] if esta_regado else datos["M_seco"]
+            k = datos["k"]
+            q = k * 0.0016 * ((u_viento / 2.2)**1.3) / ((M / 2.0)**1.4)
+            h = datos["H"]
+        q_total += q
+        h_max = max(h_max, h)
+    return q_total, h_max
 
 def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
     concentracion = 0.0
@@ -275,29 +297,49 @@ def hex_to_kml_color(hex_color, alpha="60"):
         return f"{alpha}{b}{g}{r}"
     return f"{alpha}ffffff"
 
-def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
-    kml = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>', '<name>Resultados Visor Acústico COMSA</name>']
-    if isofonas_list:
-        kml.append('<Folder><name>Mapas de Ondas de Ruido (Círculos)</name>')
-        for iso in isofonas_list:
-            kml_color = hex_to_kml_color(iso["color"], alpha="50")
-            kml.append('<Placemark>')
-            kml.append(f'<name>{iso["name"]}</name>')
-            kml.append(f'<Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>{kml_color}</color><width>1</width></LineStyle></Style>')
-            kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
-            coord_str = " ".join([f"{lon},{lat},0" for lat, lon in iso["coords"]])
-            coord_str += f" {iso['coords'][0][1]},{iso['coords'][0][0]},0"
-            kml.append(coord_str)
-            kml.append('</coordinates></LinearRing></outerBoundaryIs></Polygon>')
-            kml.append('</Placemark>')
-        kml.append('</Folder>')
+def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, modo="ruido", polvo_grid=None, viento_u=0, viento_dir=0):
+    kml = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>', '<name>Resultados Visor Ambiental COMSA</name>']
+    
+    if modo == "ruido":
+        if isofonas_list:
+            kml.append('<Folder><name>Mapas de Ondas de Ruido (Círculos)</name>')
+            for iso in isofonas_list:
+                kml_color = hex_to_kml_color(iso["color"], alpha="50")
+                kml.append('<Placemark>')
+                kml.append(f'<name>{iso["name"]}</name>')
+                kml.append(f'<Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>{kml_color}</color><width>1</width></LineStyle></Style>')
+                kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
+                coord_str = " ".join([f"{lon},{lat},0" for lat, lon in iso["coords"]])
+                coord_str += f" {iso['coords'][0][1]},{iso['coords'][0][0]},0"
+                kml.append(coord_str)
+                kml.append('</coordinates></LinearRing></outerBoundaryIs></Polygon>')
+                kml.append('</Placemark>')
+            kml.append('</Folder>')
+    elif modo == "polvo":
+        kml.append(f'<Placemark><name>Condiciones Meteorológicas</name><description>Velocidad Viento: {viento_u} m/s\nSopla desde: {viento_dir}º\nPluma hacia: {(viento_dir+180)%360}º</description><Point><coordinates>{st.session_state["map_center"][1]},{st.session_state["map_center"][0]},0</coordinates></Point></Placemark>')
+        if polvo_grid:
+            kml.append('<Folder><name>Malla de Dispersión (PM10)</name>')
+            for celda in polvo_grid:
+                kml_color = hex_to_kml_color(celda["color"], alpha="80")
+                b = celda["bounds"]
+                lat1, lon1, lat2, lon2 = b[0][0], b[0][1], b[1][0], b[1][1]
+                c_str = f"{lon1},{lat1},0 {lon2},{lat1},0 {lon2},{lat2},0 {lon1},{lat2},0 {lon1},{lat1},0"
+                kml.append('<Placemark>')
+                kml.append(f'<name>{celda["conc"]:.1f} ug/m3</name>')
+                kml.append(f'<Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>0</outline></PolyStyle></Style>')
+                kml.append(f'<Polygon><outerBoundaryIs><LinearRing><coordinates>{c_str}</coordinates></LinearRing></outerBoundaryIs></Polygon>')
+                kml.append('</Placemark>')
+            kml.append('</Folder>')
+
     for f in focos_list:
-        lon, lat = f["coords"]
+        lon, lat = f.get("coords", [f.get("lon"), f.get("lat")])
         kml.append('<Placemark>')
         kml.append(f'<name>{f["name"]}</name>')
-        kml.append(f'<description>Foco Acústico\nEmisión: {f["emision"]:.1f} dB</description>')
+        if modo == "ruido": kml.append(f'<description>Foco Acústico\nEmisión: {f["emision"]:.1f} dB</description>')
+        else: kml.append(f'<description>Foco Emisor de Polvo\nEmisión Total: {f.get("Q",0):.3f} g/s</description>')
         kml.append(f'<Point><coordinates>{lon},{lat},0</coordinates></Point>')
         kml.append('</Placemark>')
+        
     for p in pantallas_list:
         kml.append('<Placemark>')
         kml.append(f'<name>{p["name"]}</name>')
@@ -307,16 +349,18 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list):
         kml.append(" ".join([f"{lon},{lat},0" for lon, lat in p["coords"]]))
         kml.append('</coordinates></LineString>')
         kml.append('</Placemark>')
+        
     for pob in poblaciones_list:
         kml.append('<Placemark>')
         kml.append(f'<name>{pob["name"]}</name>')
-        kml.append(f'<description>Núcleo Receptor | Umbral: {pob.get("umbral", 65.0)} dB</description>')
+        kml.append(f'<description>Núcleo Receptor | Umbral: {pob.get("umbral", 65.0)}</description>')
         kml.append('<Style><PolyStyle><color>7f00ff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style>')
         kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
         kml.append(" ".join([f"{lon},{lat},0" for lon, lat in pob["coords"]]))
         kml.append(f' {pob["coords"][0][0]},{pob["coords"][0][1]},0')
         kml.append('</coordinates></LinearRing></outerBoundaryIs></Polygon>')
         kml.append('</Placemark>')
+        
     kml.append('</Document></kml>')
     kmz_buffer = io.BytesIO()
     with zipfile.ZipFile(kmz_buffer, 'w', zipfile.ZIP_DEFLATED) as zf: zf.writestr('doc.kml', "\n".join(kml))
@@ -370,7 +414,6 @@ with st.sidebar:
                     else: st.error("Archivo vacío.")
                 except Exception as e: st.error(f"Error: {e}")
 
-    # --- LEYENDA SIOSE RESTAURADA EXACTAMENTE IGUAL ---
     with st.expander("📚 Leyendas Capas Oficiales (SIOSE / ADIF)", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
         st.markdown("""
@@ -397,7 +440,6 @@ with st.sidebar:
     else:
         with st.expander("🌤️ Dinámica Meteorológica Local", expanded=True):
             st.caption("Configuración manual de la atmósfera (Simulación local).")
-            # AQUÍ ES DONDE ESTABA EL ERROR DEL NOMBRE DE LA VARIABLE. AHORA ES viento_velocidad.
             viento_velocidad = st.slider("Velocidad del viento (u) en m/s:", min_value=0.5, max_value=15.0, value=3.5, step=0.5)
             viento_direccion = st.slider("El viento sopla DESDE (Dirección):", min_value=0, max_value=350, value=270, step=10, help="0=Norte, 90=Este, 180=Sur, 270=Oeste")
             st.caption(f"Dirección física de arrastre de la pluma: **{(viento_direccion + 180) % 360}º**")
@@ -438,19 +480,20 @@ with st.sidebar:
                             props["maq"][m_nom] = m_db; st.rerun()
                         st.write(f"Potencia Foco: **{sumar_decibelios(props['maq']):.1f} dB**")
                     else:
-                        act_actual = props.get("actividad_polvo", "Excavación y carga de tierras (Retro)")
-                        act_index = list(actividades_polvo.keys()).index(act_actual) if act_actual in actividades_polvo else 0
-                        sel_act = st.selectbox("Actividad de Obra:", list(actividades_polvo.keys()), index=act_index, key=f"polvo_act_{idx}")
-                        if sel_act != act_actual:
-                            props["actividad_polvo"] = sel_act; st.rerun()
+                        act_actuales = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
+                        if isinstance(act_actuales, str): act_actuales = [act_actuales] # Safe check
+                        
+                        sel_acts = st.multiselect("Actividades de Obra Simultáneas:", list(actividades_polvo.keys()), default=act_actuales, key=f"polvo_act_{idx}")
+                        if sel_acts != act_actuales:
+                            props["actividades_polvo"] = sel_acts; st.rerun()
                             
                         reg_actual = props.get("terreno_regado", False)
                         toggle_reg = st.toggle("💧 Terreno Regado / Mojado", value=reg_actual, key=f"polvo_reg_{idx}")
                         if toggle_reg != reg_actual:
                             props["terreno_regado"] = toggle_reg; st.rerun()
                         
-                        q_calc, h_calc = calcular_emision_polvo(sel_act, toggle_reg, viento_velocidad)
-                        st.caption(f"Mecanismo: {actividades_polvo[sel_act]['metodo']} | Emisión Q: **{q_calc:.3f} g/s** (H={h_calc}m)")
+                        q_calc, h_calc = calcular_emision_polvo_lista(sel_acts, toggle_reg, viento_velocidad)
+                        st.caption(f"Emisión Combinada Q: **{q_calc:.3f} g/s** (H_eff={h_calc}m)")
 
                 elif tipo == "LineString":
                     if modo_visor == "🔊 Vectores de Ruido":
@@ -470,40 +513,63 @@ with st.sidebar:
                         st.caption("Objetivo PM10 diario de la OMS: **50 µg/m³** (Límite normativo de protección a la salud).")
                 st.write("---")
 
+    # ==========================================
+    # PROCESAMIENTO DE DATOS ANTES DE LA EXPORTACIÓN
+    # ==========================================
+    focos, pantallas_data, poblaciones, focos_aire = [], [], [], []
+    for feature in st.session_state["mis_dibujos"]:
+        tipo = feature["geometry"]["type"]
+        coords = feature["geometry"]["coordinates"]
+        props = feature["properties"]
+        if tipo == "Point":
+            focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
+            act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
+            if isinstance(act_list, str): act_list = [act_list]
+            q_v, h_v = calcular_emision_polvo_lista(act_list, props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
+            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v})
+        elif tipo == "LineString":
+            pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
+        elif tipo == "Polygon":
+            poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
+
     with st.expander("📥 3. Exportación", expanded=False):
-        if st.session_state["mis_dibujos"] and modo_visor == "🔊 Vectores de Ruido":
-            tmp_focos, tmp_pan, tmp_pob = [], [], []
-            for f in st.session_state["mis_dibujos"]:
-                t = f["geometry"]["type"]
-                if t == "Point": tmp_focos.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "emision": sumar_decibelios(f["properties"]["maq"])})
-                elif t == "LineString": tmp_pan.append({"coords": f["geometry"]["coordinates"], "name": f["properties"]["name"], "aten": f["properties"]["aten"]})
-                elif t == "Polygon": tmp_pob.append({"coords": f["geometry"]["coordinates"][0], "name": f["properties"]["name"], "umbral": f["properties"].get("umbral", 65.0)})
-            kmz_data = generar_kmz(tmp_focos, tmp_pan, tmp_pob, [])
-            st.download_button("⬇️ Descargar KMZ (Ruido)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
-        else:
-            st.caption("Exportación KMZ disponible para vectores de ruido.")
+        if st.session_state["mis_dibujos"]:
+            if modo_visor == "🔊 Vectores de Ruido":
+                kmz_data = generar_kmz(focos, pantallas_data, poblaciones, [], modo="ruido")
+                st.download_button("⬇️ Descargar KMZ (Ruido)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
+            elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
+                # Calcular malla rápida para el KMZ
+                polvo_grid_kmz = []
+                if focos_aire:
+                    min_lat = min(f["lat"] for f in focos_aire) - 0.004
+                    max_lat = max(f["lat"] for f in focos_aire) + 0.004
+                    min_lon = min(f["lon"] for f in focos_aire) - 0.005
+                    max_lon = max(f["lon"] for f in focos_aire) + 0.005
+                    s_lat, s_lon = 0.00015, 0.00020
+                    l_i = min_lat
+                    while l_i <= max_lat:
+                        lo_i = min_lon
+                        while lo_i <= max_lon:
+                            c_lat, c_lon = l_i + s_lat/2, lo_i + s_lon/2
+                            conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                            if conc > 10.0:
+                                if conc > 150.0: col = "#800000"
+                                elif conc > 50.0: col = "#FF0000"
+                                elif conc > 35.0: col = "#FF8C00"
+                                elif conc > 20.0: col = "#FFD700"
+                                else: col = "#FFFFE0"
+                                polvo_grid_kmz.append({"bounds": [[l_i, lo_i], [l_i + s_lat, lo_i + s_lon]], "color": col, "conc": conc})
+                            lo_i += s_lon
+                        l_i += s_lat
+                kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
+                st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
 
-focos = []
-pantallas_data = []
-poblaciones = []
-focos_aire = []
-
-for feature in st.session_state["mis_dibujos"]:
-    tipo = feature["geometry"]["type"]
-    coords = feature["geometry"]["coordinates"]
-    props = feature["properties"]
-    if tipo == "Point":
-        focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
-        q_v, h_v = calcular_emision_polvo(props.get("actividad_polvo"), props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
-        focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v})
-    elif tipo == "LineString":
-        pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
-    elif tipo == "Polygon":
-        poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
-
+# ==========================================
+# RENDERIZADO DEL MAPA PRINCIPAL
+# ==========================================
 col1, col2, col3 = st.columns(3)
 col1.metric("📍 Focos Activos", len(focos))
 col2.metric("〰️ Pantallas Acústicas", len(pantallas_data))
@@ -522,9 +588,12 @@ Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters').add_to(m)
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
+# Capas WMS oficiales restauradas 100%
 folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", name="🌲 Espacios Protegidos CDDA", fmt="image/png", transparent=True, opacity=0.8, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/hidrografia", layers="HY.PhysicalWaters.Waterbodies", name="💧 Zonas Fluviales", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
+folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/transportes", layers="TN.RoadTransportNetwork.RoadLink", name="🛣️ Transportes", fmt="image/png", transparent=True, opacity=0.7, overlay=True, show=False).add_to(m)
 
 fg_resultados_ruido = folium.FeatureGroup(name="🔊 Ondas de Ruido (Isófonas)", show=(modo_visor == "🔊 Vectores de Ruido")).add_to(m)
 fg_resultados_aire = folium.FeatureGroup(name="💨 Dispersión de Polvo (PM10)", show=(modo_visor == "💨 Calidad del Aire (Polvo PM10)")).add_to(m)
@@ -603,7 +672,6 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                # AQUI ESTA CORREGIDA LA VARIABLE DEL VIENTO
                 concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                 
                 if concentracion_nodo > 10.0:
@@ -652,7 +720,6 @@ for pob in poblaciones:
         if supera_umbral: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Incumple {umbral_pob}dB)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({ruido_total:.1f} dB / {umbral_pob} dB)</span></div>'
     else:
-        # AQUI TAMBIEN ESTA CORREGIDA LA VARIABLE DEL VIENTO
         polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede límite OMS: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
@@ -678,14 +745,16 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
             folium.Marker([coords[1], coords[0]], icon=folium.Icon(color="black", icon="cog"), tooltip=f"Foco: {props['name']} | {potencia_db:.1f} dB").add_to(fg_focos)
             folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({potencia_db:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
         else:
-            q_a, _ = calcular_emision_polvo(props.get("actividad_polvo"), props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
+            act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
+            if isinstance(act_list, str): act_list = [act_list]
+            q_a, _ = calcular_emision_polvo_lista(act_list, props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
             folium.Marker([coords[1], coords[0]], icon=folium.Icon(color="cloud" if not props.get("terreno_regado") else "blue", icon="info-sign"), tooltip=f"Foco: {props['name']} | Q: {q_a:.3f} g/s").add_to(fg_focos)
             folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({q_a:.3f} g/s)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
 
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- LEYENDAS EEA RESTAURADAS EXACTAMENTE IGUAL ---
+# Leyendas Dinámicas
 escala_ruido_html = """
 <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
 <div style="display: flex; flex-wrap: wrap;">
@@ -709,8 +778,8 @@ escala_polvo_html = """
     <div><span style="display:inline-block; width:12px; height:12px; background:#FFFFE0; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
     <div><span style="display:inline-block; width:12px; height:12px; background:#FFD700; border:1px solid #999;"></span> 20 - 35 (Moderado)</div>
     <div><span style="display:inline-block; width:12px; height:12px; background:#FF8C00; border:1px solid #999;"></span> 35 - 50 (Umbral Preventivo)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> 50 - 150 (Excede Límite Legal Diario)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 150 (Impacto Crítico / Peligroso)</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> 50 - 150 (Excede Límite Legal)</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 150 (Impacto Crítico)</div>
 </div>
 """
 

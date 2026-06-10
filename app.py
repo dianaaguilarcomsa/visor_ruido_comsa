@@ -70,7 +70,6 @@ malla_fina_config = [
     {"min": 80, "color": "#295180"}
 ]
 
-# Base de datos completa ampliada
 actividades_polvo = {
     "Desbroce y limpieza del terreno": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 0.5},
     "Demolición mecánica de estructuras": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 3.0},
@@ -92,12 +91,16 @@ actividades_polvo = {
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
+opciones_medidas = [
+    "💧 Riego periódico (Terreno húmedo)",
+    "🚷 Limitación de velocidad a 10 km/h",
+    "💨 Cañones nebulizadores de agua (Abatimiento)"
+]
+
 @st.cache_data
 def cargar_maquinas():
-    try:
-        return pd.read_csv("maquinaria.csv")
-    except:
-        return pd.DataFrame({"Nombre_Maquina": ["Máquina Genérica"], "dB_1m": [90.0]})
+    try: return pd.read_csv("maquinaria.csv")
+    except: return pd.DataFrame({"Nombre_Maquina": ["Máquina Genérica"], "dB_1m": [90.0]})
 
 df_maq = cargar_maquinas()
 lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
@@ -109,26 +112,18 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
         prefix = "Foco" if tipo == "Point" else "Pantalla" if tipo == "LineString" else "Población"
         feature["properties"]["name"] = f"{prefix} {idx+1}"
     
-    # Props de Ruido
-    if tipo == "Point" and "maq" not in feature["properties"]:
-        feature["properties"]["maq"] = {}
-    if tipo == "LineString" and "aten" not in feature["properties"]:
-        feature["properties"]["aten"] = 15.0
+    if tipo == "Point" and "maq" not in feature["properties"]: feature["properties"]["maq"] = {}
+    if tipo == "LineString" and "aten" not in feature["properties"]: feature["properties"]["aten"] = 15.0
     if tipo == "Polygon" and "umbral" not in feature["properties"]:
         feature["properties"]["umbral"] = 65.0
         feature["properties"]["uso_nombre"] = "Residencial"
         
-    # Props de Polvo (Actualizado para permitir múltiples)
     if tipo == "Point":
-        if "actividades_polvo" not in feature["properties"]:
-            old_act = feature["properties"].get("actividad_polvo")
-            if old_act: feature["properties"]["actividades_polvo"] = [old_act]
-            else: feature["properties"]["actividades_polvo"] = ["Excavación y carga de tierras (Retro)"]
-        if "terreno_regado" not in feature["properties"]:
-            feature["properties"]["terreno_regado"] = False
+        if "actividades_polvo" not in feature["properties"]: feature["properties"]["actividades_polvo"] = ["Excavación y carga de tierras (Retro)"]
+        if "medidas_polvo" not in feature["properties"]: feature["properties"]["medidas_polvo"] = []
 
 # ==========================================
-# FUNCIONES MATEMÁTICAS
+# FUNCIONES MATEMÁTICAS (RUIDO Y POLVO)
 # ==========================================
 def sumar_decibelios(dic_maq):
     if not dic_maq: return 0
@@ -159,7 +154,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     coords = coord_tag.text.strip().split()
                     if coords:
                         lon, lat = map(float, coords[0].split(',')[:2])
-                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "terreno_regado": False}})
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": []}})
                         continue
             ls = placemark.find('.//LineString')
             if ls is not None:
@@ -235,22 +230,36 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         coords.append([foco_lat + d_lat_final, foco_lon + d_lon_final])
     return coords
 
-def calcular_emision_polvo_lista(actividades, esta_regado, u_viento):
+def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     q_total = 0.0
     h_max = 0.5
+    
+    # Análisis de Medidas Correctoras Globales al Foco
+    aplica_riego = "💧 Riego periódico (Terreno húmedo)" in medidas
+    aplica_velocidad = "🚷 Limitación de velocidad a 10 km/h" in medidas
+    aplica_nebulizador = "💨 Cañones nebulizadores de agua (Abatimiento)" in medidas
+
     for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
+        
+        # 1. Emisión Base
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
-            if esta_regado: q = q * datos["red_humedad"]
-            h = datos["H"]
+            if aplica_riego: q = q * datos["red_humedad"]
+            if aplica_velocidad and "Tránsito" in act: q = q * 0.35 # 65% de reducción por ir despacio
         elif datos["metodo"] == "formula_caida":
-            M = datos["M_humedo"] if esta_regado else datos["M_seco"]
+            M = datos["M_humedo"] if aplica_riego else datos["M_seco"]
             k = datos["k"]
             q = k * 0.0016 * ((u_viento / 2.2)**1.3) / ((M / 2.0)**1.4)
-            h = datos["H"]
+            
+        h = datos["H"]
+        
+        # 2. Medidas de Abatimiento Final (Nebulizadores)
+        if aplica_nebulizador: q = q * 0.25 # Eficiencia del 75% atrapando partículas en el aire
+
         q_total += q
         h_max = max(h_max, h)
+        
     return q_total, h_max
 
 def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
@@ -276,7 +285,8 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         
         if dx <= 0: continue 
         
-        sigma_y = max(0.08 * dx * (1 + 0.0001 * dx)**(-0.5), 0.01)
+        # SE HA AUMENTADO EL FACTOR MULTIPLICADOR DE SIGMA_Y PARA ENSANCHAR LA PLUMA (Simulando Meandering/Fluctuación)
+        sigma_y = max(0.18 * dx * (1 + 0.0001 * dx)**(-0.5), 0.01)
         sigma_z = max(0.06 * dx * (1 + 0.0015 * dx)**(-0.5), 0.01)
         
         z = 1.5 
@@ -318,7 +328,7 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
     elif modo == "polvo":
         kml.append(f'<Placemark><name>Condiciones Meteorológicas</name><description>Velocidad Viento: {viento_u} m/s\nSopla desde: {viento_dir}º\nPluma hacia: {(viento_dir+180)%360}º</description><Point><coordinates>{st.session_state["map_center"][1]},{st.session_state["map_center"][0]},0</coordinates></Point></Placemark>')
         if polvo_grid:
-            kml.append('<Folder><name>Malla de Dispersión (PM10)</name>')
+            kml.append('<Folder><name>Malla de Dispersión PM10 (RD 102/2011)</name>')
             for celda in polvo_grid:
                 kml_color = hex_to_kml_color(celda["color"], alpha="80")
                 b = celda["bounds"]
@@ -481,18 +491,18 @@ with st.sidebar:
                         st.write(f"Potencia Foco: **{sumar_decibelios(props['maq']):.1f} dB**")
                     else:
                         act_actuales = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
-                        if isinstance(act_actuales, str): act_actuales = [act_actuales] # Safe check
+                        if isinstance(act_actuales, str): act_actuales = [act_actuales]
                         
                         sel_acts = st.multiselect("Actividades de Obra Simultáneas:", list(actividades_polvo.keys()), default=act_actuales, key=f"polvo_act_{idx}")
                         if sel_acts != act_actuales:
                             props["actividades_polvo"] = sel_acts; st.rerun()
                             
-                        reg_actual = props.get("terreno_regado", False)
-                        toggle_reg = st.toggle("💧 Terreno Regado / Mojado", value=reg_actual, key=f"polvo_reg_{idx}")
-                        if toggle_reg != reg_actual:
-                            props["terreno_regado"] = toggle_reg; st.rerun()
+                        medidas_actuales = props.get("medidas_polvo", [])
+                        sel_medidas = st.multiselect("Medidas Preventivas / Correctoras:", opciones_medidas, default=medidas_actuales, key=f"polvo_med_{idx}")
+                        if sel_medidas != medidas_actuales:
+                            props["medidas_polvo"] = sel_medidas; st.rerun()
                         
-                        q_calc, h_calc = calcular_emision_polvo_lista(sel_acts, toggle_reg, viento_velocidad)
+                        q_calc, h_calc = calcular_emision_polvo_lista(sel_acts, sel_medidas, viento_velocidad)
                         st.caption(f"Emisión Combinada Q: **{q_calc:.3f} g/s** (H_eff={h_calc}m)")
 
                 elif tipo == "LineString":
@@ -510,12 +520,9 @@ with st.sidebar:
                             props["uso_nombre"] = sel_uso; props["umbral"] = usos_pob[sel_uso]; st.rerun()
                         props["umbral"] = st.number_input("Límite Legal a aplicar (dB):", value=float(props["umbral"]), step=1.0, key=f"umb_{idx}")
                     else:
-                        st.caption("Objetivo PM10 diario de la OMS: **50 µg/m³** (Límite normativo de protección a la salud).")
+                        st.caption("Límite Diario PM10 (RD 102/2011): **50 µg/m³** (Límite normativo de protección a la salud).")
                 st.write("---")
 
-    # ==========================================
-    # PROCESAMIENTO DE DATOS ANTES DE LA EXPORTACIÓN
-    # ==========================================
     focos, pantallas_data, poblaciones, focos_aire = [], [], [], []
     for feature in st.session_state["mis_dibujos"]:
         tipo = feature["geometry"]["type"]
@@ -524,8 +531,9 @@ with st.sidebar:
         if tipo == "Point":
             focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"])})
             act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
+            med_list = props.get("medidas_polvo", [])
             if isinstance(act_list, str): act_list = [act_list]
-            q_v, h_v = calcular_emision_polvo_lista(act_list, props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
+            q_v, h_v = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
             focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v})
         elif tipo == "LineString":
             pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
@@ -538,7 +546,6 @@ with st.sidebar:
                 kmz_data = generar_kmz(focos, pantallas_data, poblaciones, [], modo="ruido")
                 st.download_button("⬇️ Descargar KMZ (Ruido)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                # Calcular malla rápida para el KMZ
                 polvo_grid_kmz = []
                 if focos_aire:
                     min_lat = min(f["lat"] for f in focos_aire) - 0.004
@@ -552,11 +559,11 @@ with st.sidebar:
                         while lo_i <= max_lon:
                             c_lat, c_lon = l_i + s_lat/2, lo_i + s_lon/2
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
-                            if conc > 10.0:
-                                if conc > 150.0: col = "#800000"
-                                elif conc > 50.0: col = "#FF0000"
-                                elif conc > 35.0: col = "#FF8C00"
-                                elif conc > 20.0: col = "#FFD700"
+                            if conc >= 10.0:
+                                if conc >= 100.0: col = "#800000"
+                                elif conc >= 50.0: col = "#FF0000"
+                                elif conc >= 40.0: col = "#FF8C00"
+                                elif conc >= 20.0: col = "#FFD700"
                                 else: col = "#FFFFE0"
                                 polvo_grid_kmz.append({"bounds": [[l_i, lo_i], [l_i + s_lat, lo_i + s_lon]], "color": col, "conc": conc})
                             lo_i += s_lon
@@ -567,9 +574,6 @@ with st.sidebar:
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
 
-# ==========================================
-# RENDERIZADO DEL MAPA PRINCIPAL
-# ==========================================
 col1, col2, col3 = st.columns(3)
 col1.metric("📍 Focos Activos", len(focos))
 col2.metric("〰️ Pantallas Acústicas", len(pantallas_data))
@@ -588,7 +592,6 @@ Fullscreen(position='bottomleft', title='Ampliar a pantalla completa').add_to(m)
 MeasureControl(position='topleft', primary_length_unit='meters').add_to(m)
 Geocoder(position='topleft', add_marker=False).add_to(m)
 
-# Capas WMS oficiales restauradas 100%
 folium.WmsTileLayer(url="https://ovc.catastro.meh.es/Cartografia/WMS/ServidorWMS.aspx", layers="CATASTRO", name="🏢 Catastro", fmt="image/png", transparent=True, opacity=0.6, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/ocupacion-suelo", layers="LC.LandCoverSurfaces", name="🗺️ Usos del Suelo (SIOSE)", fmt="image/png", transparent=True, opacity=0.5, overlay=True, show=False).add_to(m)
 folium.WmsTileLayer(url="https://bio.discomap.eea.europa.eu/arcgis/services/ProtectedSites/CDDA_Dyna_WM/MapServer/WMSServer", layers="0,1,2,3,4", name="🌲 Espacios Protegidos CDDA", fmt="image/png", transparent=True, opacity=0.8, overlay=True, show=False).add_to(m)
@@ -674,11 +677,11 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 
                 concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                 
-                if concentracion_nodo > 10.0:
-                    if concentracion_nodo > 150.0: color_bloque = "#800000"
-                    elif concentracion_nodo > 50.0: color_bloque = "#FF0000"
-                    elif concentracion_nodo > 35.0: color_bloque = "#FF8C00"
-                    elif concentracion_nodo > 20.0: color_bloque = "#FFD700"
+                if concentracion_nodo >= 10.0:
+                    if concentracion_nodo >= 100.0: color_bloque = "#800000"
+                    elif concentracion_nodo >= 50.0: color_bloque = "#FF0000"
+                    elif concentracion_nodo >= 40.0: color_bloque = "#FF8C00"
+                    elif concentracion_nodo >= 20.0: color_bloque = "#FFD700"
                     else: color_bloque = "#FFFFE0"
                     
                     caja_limites = [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]]
@@ -721,7 +724,7 @@ for pob in poblaciones:
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({ruido_total:.1f} dB / {umbral_pob} dB)</span></div>'
     else:
         polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
-        if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede límite OMS: {polvo_centro:.1f}µg)</span></div>'
+        if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102/2011: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         
     folium.Polygon(locations=[[lat, lon] for lon, lat in poly_coords], color=color_pob, fill=True, fill_opacity=0.35, weight=2).add_to(fg_poblaciones)
@@ -746,15 +749,18 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
             folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({potencia_db:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
         else:
             act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
+            med_list = props.get("medidas_polvo", [])
             if isinstance(act_list, str): act_list = [act_list]
-            q_a, _ = calcular_emision_polvo_lista(act_list, props.get("terreno_regado"), viento_velocidad if 'viento_velocidad' in locals() else 3.5)
-            folium.Marker([coords[1], coords[0]], icon=folium.Icon(color="cloud" if not props.get("terreno_regado") else "blue", icon="info-sign"), tooltip=f"Foco: {props['name']} | Q: {q_a:.3f} g/s").add_to(fg_focos)
+            q_a, _ = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
+            
+            icono_color = "blue" if med_list else "cloud"
+            folium.Marker([coords[1], coords[0]], icon=folium.Icon(color=icono_color, icon="info-sign"), tooltip=f"Foco: {props['name']} | Q: {q_a:.3f} g/s").add_to(fg_focos)
             folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({q_a:.3f} g/s)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
 
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# Leyendas Dinámicas
+# --- LEYENDAS REFORMADAS Y ANCLADAS ARRIBA/CENTRO PARA EVITAR CORTES ---
 escala_ruido_html = """
 <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
 <div style="display: flex; flex-wrap: wrap;">
@@ -773,23 +779,23 @@ escala_ruido_html = """
 """
 
 escala_polvo_html = """
-<div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Polvo PM10 (µg/m³)</div>
-<div style="display: flex; flex-direction: column; gap: 3px;">
+<div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
+<div style="display: flex; flex-direction: column; gap: 4px;">
     <div><span style="display:inline-block; width:12px; height:12px; background:#FFFFE0; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FFD700; border:1px solid #999;"></span> 20 - 35 (Moderado)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF8C00; border:1px solid #999;"></span> 35 - 50 (Umbral Preventivo)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> 50 - 150 (Excede Límite Legal)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 150 (Impacto Crítico)</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FFD700; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FF8C00; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite Diario RD 102/2011)</b></div>
+    <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
 </div>
 """
 
 escala_activa = escala_ruido_html if modo_visor == "🔊 Vectores de Ruido" else escala_polvo_html
 
 leyendas_html = f"""
-<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
+<div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; bottom: 30px; left: 60px; z-index: 9999; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 230px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
+<div style="position: absolute; bottom: 50px; left: 60px; z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 250px; pointer-events: none; display: flex; flex-direction: column; gap: 10px;">
     <div>
         {escala_activa}
     </div>

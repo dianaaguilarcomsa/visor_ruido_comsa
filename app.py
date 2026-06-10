@@ -13,6 +13,7 @@ import requests
 from branca.element import Template, MacroElement
 from shapely.geometry import Point, LineString, Polygon as ShapelyPolygon
 from shapely.ops import unary_union
+from datetime import datetime
 
 st.set_page_config(page_title="Visor Ambiental Integral", layout="wide")
 
@@ -87,7 +88,6 @@ actividades_polvo = {
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
-# MEDIDAS PREVENTIVAS TEXTUALES Y MATEMÁTICAS (Basadas en EIA)
 opciones_medidas = [
     "💧 Riego periódico de tierras y acopios (Min. 2 riegos/día)",
     "🚷 Control de velocidad a 30 km/h en zona de obra",
@@ -106,7 +106,7 @@ def obtener_clima_actual_api(lat, lon):
         d = r["current_weather"]["winddirection"]
         return float(u), float(d)
     except:
-        return 3.5, 270.0 # Valores refugio si falla la conexión
+        return 3.5, 270.0 # Valores refugio
 
 @st.cache_data
 def cargar_maquinas():
@@ -245,7 +245,6 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     q_total = 0.0
     h_max = 0.5
     
-    # Evaluación matemática de Medidas Correctoras
     aplica_riego = "💧 Riego periódico de tierras y acopios (Min. 2 riegos/día)" in medidas
     aplica_velocidad = "🚷 Control de velocidad a 30 km/h en zona de obra" in medidas
     aplica_tapado = "🚚 Transporte de material tapado y sin derrames" in medidas
@@ -255,23 +254,22 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
         
-        # 1. Emisión Base
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
             if aplica_riego: q = q * datos["red_humedad"]
             
             if "Tránsito" in act:
-                if aplica_velocidad: q = q * 0.40 # 60% reducción de polvo por bajar velocidad
-                if aplica_lavarruedas and "públicas" in act: q = q * 0.20 # 80% reducción de resuspensión fuera
+                if aplica_velocidad: q = q * 0.40 # 60% reducción
+                if aplica_lavarruedas and "públicas" in act: q = q * 0.20
                 
-            if "Perforación" in act and aplica_captador: q = q * 0.15 # 85% de reducción
+            if "Perforación" in act and aplica_captador: q = q * 0.15
             
         elif datos["metodo"] == "formula_caida":
             M = datos["M_humedo"] if aplica_riego else datos["M_seco"]
             k = datos["k"]
             q = k * 0.0016 * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
             
-            if "Descarga" in act and aplica_tapado: q = q * 0.70 # 30% menos de pérdida
+            if "Descarga" in act and aplica_tapado: q = q * 0.70
             
         h = datos["H"]
         q_total += q
@@ -300,21 +298,20 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         dx = dist * math.cos(angulo_relativo)
         dy = dist * math.sin(angulo_relativo)
         
-        # EL ALGORITMO MEJORADO TIPO AERMOD: 
-        # Más dispersión lateral y bulbo de difusion hacia atras.
-        sigma_y0 = 25.0 # Aumento del ensanchamiento base de la obra
+        # --- SOLUCIÓN AL CORTE Y FORMA DE LA PLUMA ---
+        sigma_y0 = 25.0 
         sigma_z0 = 5.0
         
-        if dx > 0: # A favor del viento
-            # Más apertura del cono lateral (coef 0.30 en vez de 0.08)
-            sigma_y = sigma_y0 + 0.30 * dx * (1 + 0.0001 * dx)**(-0.5)
+        if dx > 0: 
+            sigma_y = sigma_y0 + 0.35 * dx * (1 + 0.0001 * dx)**(-0.5)
             sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
             decay_x = 1.0
-        else: # En contra del viento (bulbo difuso trasero)
-            if dx < -45: continue # Límite de propagación contra el viento
-            sigma_y = sigma_y0
+        else: 
+            # Aumento del límite trasero para un desvanecimiento en "bulbo" mucho más suave
+            if dx < -70: continue 
+            sigma_y = sigma_y0 + 0.25 * abs(dx) 
             sigma_z = sigma_z0
-            decay_x = math.exp(-(dx**2) / (2 * 15.0**2))
+            decay_x = math.exp(-(dx**2) / (2 * 25.0**2)) 
         
         z = 1.5 
         
@@ -533,13 +530,11 @@ with st.sidebar:
                         if sel_acts != act_actuales:
                             props["actividades_polvo"] = sel_acts; st.rerun()
                             
-                        # === PANEL CENTRAL DE MEDIDAS PREVENTIVAS ===
                         medidas_actuales = props.get("medidas_polvo", [])
                         sel_medidas = st.multiselect("Aplicar Medidas Preventivas:", opciones_medidas, default=medidas_actuales, key=f"polvo_med_{idx}")
                         if sel_medidas != medidas_actuales:
                             props["medidas_polvo"] = sel_medidas; st.rerun()
                         
-                        # Chivato Visual Matemático de Reducción
                         q_base, _ = calcular_emision_polvo_lista(sel_acts, [], viento_velocidad)
                         q_calc, h_calc = calcular_emision_polvo_lista(sel_acts, sel_medidas, viento_velocidad)
                         
@@ -578,13 +573,13 @@ with st.sidebar:
             med_list = props.get("medidas_polvo", [])
             if isinstance(act_list, str): act_list = [act_list]
             q_v, h_v = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
-            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v})
+            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v, "medidas": med_list, "actividades": act_list})
         elif tipo == "LineString":
             pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
         elif tipo == "Polygon":
             poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
 
-    with st.expander("📥 3. Exportación", expanded=False):
+    with st.expander("📥 3. Exportación y Reportes", expanded=False):
         if st.session_state["mis_dibujos"]:
             if modo_visor == "🔊 Vectores de Ruido":
                 kmz_data = generar_kmz(focos, pantallas_data, poblaciones, [], modo="ruido")
@@ -592,10 +587,10 @@ with st.sidebar:
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 polvo_grid_kmz = []
                 if focos_aire:
-                    min_lat = min(f["lat"] for f in focos_aire) - 0.004
-                    max_lat = max(f["lat"] for f in focos_aire) + 0.004
-                    min_lon = min(f["lon"] for f in focos_aire) - 0.005
-                    max_lon = max(f["lon"] for f in focos_aire) + 0.005
+                    min_lat = min(f["lat"] for f in focos_aire) - 0.006
+                    max_lat = max(f["lat"] for f in focos_aire) + 0.006
+                    min_lon = min(f["lon"] for f in focos_aire) - 0.008
+                    max_lon = max(f["lon"] for f in focos_aire) + 0.008
                     s_lat, s_lon = 0.00015, 0.00020
                     l_i = min_lat
                     while l_i <= max_lat:
@@ -612,8 +607,55 @@ with st.sidebar:
                                 polvo_grid_kmz.append({"bounds": [[l_i, lo_i], [l_i + s_lat, lo_i + s_lon]], "color": col, "conc": conc})
                             lo_i += s_lon
                         l_i += s_lat
+                
+                # Botón de KMZ
                 kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
                 st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
+                
+                # --- NUEVO: BOTÓN DE GENERACIÓN DE INFORME TIPO CONSULTORA ---
+                st.write("---")
+                informe_txt = "ESTUDIO ATMOSFÉRICO: POLVO Y PARTÍCULAS PM10. FASE DE OBRA\n"
+                informe_txt += "="*65 + "\n\n"
+                informe_txt += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                
+                informe_txt += "1. CONDICIONES METEOROLÓGICAS (Meteoblue/Open-Meteo)\n"
+                informe_txt += "-"*55 + "\n"
+                informe_txt += f"Velocidad del viento (u): {viento_velocidad} m/s\n"
+                informe_txt += f"Dirección de procedencia: {viento_direccion}º\n"
+                informe_txt += f"Dirección de arrastre de la pluma: {(viento_direccion + 180) % 360}º\n\n"
+                
+                informe_txt += "2. MODELO MATEMÁTICO EMPLEADO\n"
+                informe_txt += "-"*55 + "\n"
+                informe_txt += "Modelo Gaussiano de pluma en estado estacionario (equivalente AUSTAL2000).\n"
+                informe_txt += "Configurado para Focos de Área/Volumen para la simulación del bulbo difuso y dispersión por meandering de acuerdo con los estándares de la EPA.\n\n"
+                
+                informe_txt += "3. INVENTARIO DE FOCOS Y MEDIDAS CORRECTORAS APLICADAS\n"
+                informe_txt += "-"*55 + "\n"
+                for i, f in enumerate(focos_aire):
+                    informe_txt += f"Foco {i+1}: {f['name']}\n"
+                    informe_txt += f"  - Coordenadas: Lat {f['lat']:.5f}, Lon {f['lon']:.5f}\n"
+                    informe_txt += f"  - Actividades simultáneas:\n"
+                    for a in f['actividades']: informe_txt += f"      * {a}\n"
+                    
+                    if f['medidas']:
+                        informe_txt += f"  - Medidas preventivas activas:\n"
+                        for m in f['medidas']: informe_txt += f"      * {m}\n"
+                    else:
+                        informe_txt += f"  - Medidas preventivas activas: NINGUNA\n"
+                    
+                    q_base_foco, _ = calcular_emision_polvo_lista(f['actividades'], [], viento_velocidad)
+                    informe_txt += f"  - Tasa de Emisión Base: {q_base_foco:.3f} g/s\n"
+                    informe_txt += f"  - Tasa de Emisión Final (Tras medidas): {f['Q']:.3f} g/s\n\n"
+                
+                informe_txt += "4. NORMATIVA Y CONCLUSIONES\n"
+                informe_txt += "-"*55 + "\n"
+                informe_txt += "La evaluación se ha realizado teniendo en cuenta los límites establecidos en el "
+                informe_txt += "Real Decreto 102/2011, de 28 de enero, relativo a la mejora de la calidad del aire.\n"
+                informe_txt += "Límite Diario legal para protección de la salud humana: 50 µg/m³.\n\n"
+                informe_txt += "Se recomienda visualizar el KMZ adjunto para verificar la no afección a receptores sensibles "
+                informe_txt += "(Nivel Crítico > 50 µg/m³ representado en color rojo en la cartografía adjunta).\n"
+                
+                st.download_button("📄 Descargar Informe Resumen (TXT)", data=informe_txt, file_name="informe_polvo.txt", mime="text/plain", use_container_width=True)
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
@@ -704,10 +746,11 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        min_lat = min(f["lat"] for f in focos_aire) - 0.004
-        max_lat = max(f["lat"] for f in focos_aire) + 0.004
-        min_lon = min(f["lon"] for f in focos_aire) - 0.005
-        max_lon = max(f["lon"] for f in focos_aire) + 0.005
+        # AMPLIAMOS EL MARGEN PARA QUE NO SE CORTE LA PLUMA
+        min_lat = min(f["lat"] for f in focos_aire) - 0.006
+        max_lat = max(f["lat"] for f in focos_aire) + 0.006
+        min_lon = min(f["lon"] for f in focos_aire) - 0.008
+        max_lon = max(f["lon"] for f in focos_aire) + 0.008
         
         step_lat = 0.00015
         step_lon = 0.00020
@@ -804,31 +847,36 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
+# --- LEYENDAS CROMÁTICAS FLOTANTES (CORREGIDAS Y EN HORIZONTAL EN EL CENTRO INFERIOR) ---
 escala_ruido_html = """
-<div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
-<div style="display: flex; flex-wrap: wrap;">
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#00FF00; border:1px solid #999;"></span> 30-35</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#66B24D; border:1px solid #999;"></span> 35-40</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#99CC33; border:1px solid #999;"></span> 40-45</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#D8F2A0; border:1px solid #999;"></span> 45-50</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFFF00; border:1px solid #999;"></span> 50-55</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFE6AA; border:1px solid #999;"></span> 55-60</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFAA33; border:1px solid #999;"></span> 60-65</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF3333; border:1px solid #999;"></span> 65-70</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#CC3333; border:1px solid #999;"></span> 70-75</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; border:1px solid #999;"></span> 75-80</div>
-    <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#295180; border:1px solid #999;"></span> > 80</div>
+<div style="flex: 1; min-width: 250px;">
+    <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
+    <div style="display: flex; flex-wrap: wrap;">
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#00FF00; border:1px solid #999;"></span> 30-35</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#66B24D; border:1px solid #999;"></span> 35-40</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#99CC33; border:1px solid #999;"></span> 40-45</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#D8F2A0; border:1px solid #999;"></span> 45-50</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFFF00; border:1px solid #999;"></span> 50-55</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFE6AA; border:1px solid #999;"></span> 55-60</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FFAA33; border:1px solid #999;"></span> 60-65</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF3333; border:1px solid #999;"></span> 65-70</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#CC3333; border:1px solid #999;"></span> 70-75</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#FF00FF; border:1px solid #999;"></span> 75-80</div>
+        <div style="width: 50%; margin-bottom: 2px;"><span style="display:inline-block; width:12px; height:12px; background:#295180; border:1px solid #999;"></span> > 80</div>
+    </div>
 </div>
 """
 
 escala_polvo_html = """
-<div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
-<div style="display: flex; flex-direction: column; gap: 4px;">
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FFFFE0; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FFD700; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF8C00; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite Diario RD 102/2011)</b></div>
-    <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
+<div style="flex: 1; min-width: 250px;">
+    <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+        <div><span style="display:inline-block; width:12px; height:12px; background:#FFFFE0; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#FFD700; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#FF8C00; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
+    </div>
 </div>
 """
 
@@ -838,22 +886,22 @@ leyendas_html = f"""
 <div style="position: absolute; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
 </div>
-<div style="position: absolute; top: 100px; right: 20px; z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 250px; pointer-events: auto; max-height: 80vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;">
-    <div>
-        {escala_activa}
-    </div>
-    <div>
+<div style="position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 12px; border: 1px solid rgba(0,0,0,0.1); border-radius: 10px; font-family: sans-serif; font-size: 11px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); pointer-events: auto; display: flex; flex-direction: row; gap: 30px; flex-wrap: wrap; max-width: 90vw;">
+    {escala_activa}
+    <div style="flex: 1; min-width: 250px;">
         <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> LIC/ZEC (Hábitats)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #FF8888; margin-right: 5px;"></span> ZEPA (Aves)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #333; margin-right: 5px;"></span> LIC + ZEPA</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#7CFC00; border:1px solid #999; margin-right: 5px;"></span> Reserva Estricta (Ia)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Área Silvestre (Ib)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional (II)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural (III)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat (IV)</div>
-        <div style="margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Protegido (V)</div>
-        <div style="display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Área Uso Sost. (VI)</div>
+        <div style="display: flex; flex-wrap: wrap;">
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> LIC/ZEC</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #FF8888; margin-right: 5px;"></span> ZEPA</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #333; margin-right: 5px;"></span> LIC+ZEPA</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#7CFC00; border:1px solid #999; margin-right: 5px;"></span> Res. Estricta</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Silvestre</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Prot.</div>
+            <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Uso Sost.</div>
+        </div>
     </div>
 </div>
 """

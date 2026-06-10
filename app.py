@@ -87,10 +87,10 @@ actividades_polvo = {
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
-# MEDIDAS PREVENTIVAS TEXTUALES Y MATEMÁTICAS (RD 102/2011 y EIA)
+# MEDIDAS PREVENTIVAS TEXTUALES Y MATEMÁTICAS (Basadas en EIA)
 opciones_medidas = [
-    "💧 Riego periódico de tierras y acopios (2/día)",
-    "🚷 Control de velocidad a 30 km/h en obra",
+    "💧 Riego periódico de tierras y acopios (Min. 2 riegos/día)",
+    "🚷 Control de velocidad a 30 km/h en zona de obra",
     "🚚 Transporte de material tapado y sin derrames",
     "🔧 Ajuste de motores y registro ITV al día",
     "💨 Equipos de perforación con captadores de polvo",
@@ -245,9 +245,9 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     q_total = 0.0
     h_max = 0.5
     
-    # Análisis de Medidas Correctoras
-    aplica_riego = "💧 Riego periódico de tierras y acopios (2/día)" in medidas
-    aplica_velocidad = "🚷 Control de velocidad a 30 km/h en obra" in medidas
+    # Evaluación matemática de Medidas Correctoras
+    aplica_riego = "💧 Riego periódico de tierras y acopios (Min. 2 riegos/día)" in medidas
+    aplica_velocidad = "🚷 Control de velocidad a 30 km/h en zona de obra" in medidas
     aplica_tapado = "🚚 Transporte de material tapado y sin derrames" in medidas
     aplica_captador = "💨 Equipos de perforación con captadores de polvo" in medidas
     aplica_lavarruedas = "🚿 Lavado de ruedas a la salida (Lavarruedas)" in medidas
@@ -261,8 +261,8 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
             if aplica_riego: q = q * datos["red_humedad"]
             
             if "Tránsito" in act:
-                if aplica_velocidad: q = q * 0.6 # Reducción 40%
-                if aplica_lavarruedas and "públicas" in act: q = q * 0.2 # 80% reducción de resuspensión fuera de obra
+                if aplica_velocidad: q = q * 0.40 # 60% reducción de polvo por bajar velocidad
+                if aplica_lavarruedas and "públicas" in act: q = q * 0.20 # 80% reducción de resuspensión fuera
                 
             if "Perforación" in act and aplica_captador: q = q * 0.15 # 85% de reducción
             
@@ -271,7 +271,7 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
             k = datos["k"]
             q = k * 0.0016 * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
             
-            if "Descarga" in act and aplica_tapado: q = q * 0.7 # 30% menos de pérdida
+            if "Descarga" in act and aplica_tapado: q = q * 0.70 # 30% menos de pérdida
             
         h = datos["H"]
         q_total += q
@@ -297,22 +297,21 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         dir_pluma = (dir_viento_desde + 180) % 360
         angulo_relativo = math.radians(bearing - dir_pluma)
         
-        # Proyecciones cartesianas relativas al viento
-        dx = dist * math.cos(angulo_relativo) # Eje del viento (+ es a favor, - es en contra)
-        dy = dist * math.sin(angulo_relativo) # Eje transversal
+        dx = dist * math.cos(angulo_relativo)
+        dy = dist * math.sin(angulo_relativo)
         
-        # NUEVO: Modelado de Fuente de Volumen (AERMOD approach) para obras
-        # Esto genera la forma de abanico y el bulbo trasero que ves en tus planos profesionales
-        sigma_y0 = 15.0 # Ensanchamiento inicial de la obra
+        # EL ALGORITMO MEJORADO TIPO AERMOD: 
+        # Más dispersión lateral y bulbo de difusion hacia atras.
+        sigma_y0 = 25.0 # Aumento del ensanchamiento base de la obra
         sigma_z0 = 5.0
         
-        if dx > 0:
-            sigma_y = sigma_y0 + 0.20 * dx * (1 + 0.0001 * dx)**(-0.5)
+        if dx > 0: # A favor del viento
+            # Más apertura del cono lateral (coef 0.30 en vez de 0.08)
+            sigma_y = sigma_y0 + 0.30 * dx * (1 + 0.0001 * dx)**(-0.5)
             sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
             decay_x = 1.0
-        else:
-            # Difusión hacia atrás (bulbo a barlovento) simulado con decaimiento rápido
-            if dx < -40: continue # Límite físico del bulbo trasero
+        else: # En contra del viento (bulbo difuso trasero)
+            if dx < -45: continue # Límite de propagación contra el viento
             sigma_y = sigma_y0
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 15.0**2))
@@ -482,7 +481,7 @@ with st.sidebar:
             if origen_viento == "📡 Tiempo Real (API Open-Meteo)":
                 lat_api, lon_api = st.session_state["map_center"]
                 u_real, dir_real = obtener_clima_actual_api(lat_api, lon_api)
-                st.success(f"Datos obtenidos para las coordenadas actuales.")
+                st.success(f"Datos obtenidos de Open-Meteo para las coordenadas del mapa.")
                 viento_velocidad = st.number_input("Velocidad detectada (m/s):", value=u_real, disabled=True)
                 viento_direccion = st.number_input("Dirección (º desde):", value=dir_real, disabled=True)
             else:
@@ -534,13 +533,21 @@ with st.sidebar:
                         if sel_acts != act_actuales:
                             props["actividades_polvo"] = sel_acts; st.rerun()
                             
+                        # === PANEL CENTRAL DE MEDIDAS PREVENTIVAS ===
                         medidas_actuales = props.get("medidas_polvo", [])
-                        sel_medidas = st.multiselect("Medidas Preventivas (RD 102/2011 y EIA):", opciones_medidas, default=medidas_actuales, key=f"polvo_med_{idx}")
+                        sel_medidas = st.multiselect("Aplicar Medidas Preventivas:", opciones_medidas, default=medidas_actuales, key=f"polvo_med_{idx}")
                         if sel_medidas != medidas_actuales:
                             props["medidas_polvo"] = sel_medidas; st.rerun()
                         
+                        # Chivato Visual Matemático de Reducción
+                        q_base, _ = calcular_emision_polvo_lista(sel_acts, [], viento_velocidad)
                         q_calc, h_calc = calcular_emision_polvo_lista(sel_acts, sel_medidas, viento_velocidad)
-                        st.caption(f"Emisión Combinada Q: **{q_calc:.3f} g/s** (H_eff={h_calc}m)")
+                        
+                        if q_base > 0 and len(sel_medidas) > 0:
+                            reduccion = (1 - (q_calc / q_base)) * 100
+                            st.success(f"📉 Medidas aplicadas: Emisión reducida en un **{reduccion:.1f}%**")
+                            
+                        st.caption(f"Emisión Resultante Q: **{q_calc:.3f} g/s** (H_eff={h_calc}m)")
 
                 elif tipo == "LineString":
                     if modo_visor == "🔊 Vectores de Ruido":
@@ -797,7 +804,6 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- LEYENDAS CROMÁTICAS FLOTANTES (CSS CORREGIDO Y ANCLADAS ARRIBA A LA DERECHA) ---
 escala_ruido_html = """
 <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
 <div style="display: flex; flex-wrap: wrap;">

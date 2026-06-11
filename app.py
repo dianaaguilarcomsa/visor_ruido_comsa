@@ -645,11 +645,13 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
+                # --- SOLUCIÓN DEL RENDIMIENTO Y RESOLUCIÓN ALTA ---
                 polvo_grid_kmz = []
                 poligonos_color = {"#BD2328": [], "#DC826C": [], "#ECAE93": [], "#F6D2B9": [], "#FDF1E2": []}
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
+                    
                     margen_lat = 0.015 + (max_q * 0.015) 
                     margen_lon = 0.020 + (max_q * 0.015)
                     
@@ -658,11 +660,9 @@ with st.sidebar:
                     min_lon = min(f["lon"] for f in focos_aire) - margen_lon
                     max_lon = max(f["lon"] for f in focos_aire) + margen_lon
                     
-                    lat_span = max_lat - min_lat
-                    lon_span = max_lon - min_lon
-                    
-                    step_lat = max(0.00015, lat_span / 120.0)
-                    step_lon = max(0.00020, lon_span / 120.0)
+                    # RESTAURAMOS LA MALLA FINA Y DE ALTA RESOLUCIÓN:
+                    step_lat = 0.00015
+                    step_lon = 0.00020
                     
                     lat_i = min_lat
                     while lat_i <= max_lat:

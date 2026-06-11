@@ -628,7 +628,7 @@ with st.sidebar:
                                 if f["emision"] <= 0: continue
                                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
                                 if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                                     if ShapelyPolygon(poly_coords).intersects(iso_poly): 
                                         supera_umbral = True; break
@@ -645,13 +645,13 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
+                # --- SOLUCIÓN DEL RENDIMIENTO Y RESOLUCIÓN ALTA ---
                 polvo_grid_kmz = []
                 poligonos_color = {"#D16248": [], "#D66F57": [], "#DC7D66": [], "#E18A75": [], "#E69884": []}
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
                     
-                    # MARGEN DINÁMICO QUE ASEGURA QUE LAS VOLADURAS NO SE CORTEN AL FINAL
                     margen_lat = 0.015 + (max_q * 0.015) 
                     margen_lon = 0.020 + (max_q * 0.015)
                     
@@ -660,13 +660,9 @@ with st.sidebar:
                     min_lon = min(f["lon"] for f in focos_aire) - margen_lon
                     max_lon = max(f["lon"] for f in focos_aire) + margen_lon
                     
-                    lat_span = max_lat - min_lat
-                    lon_span = max_lon - min_lon
-                    
-                    # --- LA MALLA FINA (TAMAÑO FIJO Y MUY PEQUEÑO, PERO CON LÍMITE DE PROTECCIÓN) ---
-                    # Al dividir entre 75.0 aseguramos que NUNCA pase de 5.625 cuadrados, bajando el cálculo a pocos segundos.
-                    step_lat = max(0.00015, lat_span / 75.0)
-                    step_lon = max(0.00020, lon_span / 75.0)
+                    # RESTAURAMOS LA MALLA FINA Y DE ALTA RESOLUCIÓN:
+                    step_lat = 0.00015
+                    step_lon = 0.00020
                     
                     lat_i = min_lat
                     while lat_i <= max_lat:
@@ -678,7 +674,6 @@ with st.sidebar:
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                             
                             if conc >= 10.0:
-                                # COLORES PASTEL SUAVIZADOS TIPO GRADIENTE HOMOGÉNEO
                                 if conc >= 100.0: col = "#D16248" 
                                 elif conc >= 50.0: col = "#D66F57" 
                                 elif conc >= 40.0: col = "#DC7D66" 
@@ -886,7 +881,7 @@ for pob in poblaciones:
                 if f["emision"] <= 0: continue
                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json)
                 if len(iso_coords_limite) >= 3:
-                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
+                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                     if shapely_poly.intersects(iso_poly): 
                         supera_umbral = True
@@ -936,7 +931,6 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDAS CROMÁTICAS FLOTANTES
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>

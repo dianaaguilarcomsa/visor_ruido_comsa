@@ -88,7 +88,6 @@ actividades_polvo = {
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
-# MEDIDAS PREVENTIVAS PURAMENTE MATEMÁTICAS CON PORCENTAJES VISIBLES
 opciones_medidas = [
     "💧 Riego periódico de tierras y acopios (-50% emisión)",
     "🚷 Control de velocidad a 30 km/h en zona de obra (-40% resuspensión en tránsito)",
@@ -299,11 +298,10 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
             decay_x = 1.0
         else: 
-            # --- SOLUCIÓN DEL BULBO TRASERO MÁS SUAVE ---
-            if dx < -250: continue 
+            if dx < -150: continue 
             sigma_y = sigma_y0 + 0.25 * abs(dx) 
             sigma_z = sigma_z0
-            decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
+            decay_x = math.exp(-(dx**2) / (2 * 40.0**2)) 
         
         z = 1.5 
         
@@ -630,7 +628,7 @@ with st.sidebar:
                                 if f["emision"] <= 0: continue
                                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
                                 if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                                     if ShapelyPolygon(poly_coords).intersects(iso_poly): 
                                         supera_umbral = True; break
@@ -647,10 +645,12 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                # --- SOLUCIÓN DEL RENDIMIENTO Y EL CORTE RECTO ---
+                
+                # --- AQUÍ EMPIEZA LA SÚPER OPTIMIZACIÓN DE RENDIMIENTO CON SHAPELY ---
                 polvo_grid_kmz = []
+                poligonos_color = {"#BD2328": [], "#DC826C": [], "#ECAE93": [], "#F6D2B9": [], "#FDF1E2": []}
+                
                 if focos_aire:
-                    # Lienzo dinámico escalable según la potencia del foco más bestia (ej. Voladuras)
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
                     margen_lat = 0.004 + (max_q * 0.0015) 
                     margen_lon = 0.005 + (max_q * 0.0020)
@@ -662,25 +662,42 @@ with st.sidebar:
                     
                     lat_span = max_lat - min_lat
                     lon_span = max_lon - min_lon
-                    # Ajuste de resolución para que nunca tarde más de 1 segundo en pensar
-                    step_lat = max(0.00015, lat_span / 55.0)
-                    step_lon = max(0.00020, lon_span / 55.0)
                     
-                    l_i = min_lat
-                    while l_i <= max_lat:
-                        lo_i = min_lon
-                        while lo_i <= max_lon:
-                            c_lat, c_lon = l_i + step_lat/2, lo_i + step_lon/2
+                    # RESOLUCIÓN FIJA Y SEGURA: Malla rápida de no más de 60x60 para evitar cuelgues
+                    step_lat = lat_span / 60.0
+                    step_lon = lon_span / 60.0
+                    
+                    lat_i = min_lat
+                    while lat_i <= max_lat:
+                        lon_i = min_lon
+                        while lon_i <= max_lon:
+                            c_lat = lat_i + step_lat/2
+                            c_lon = lon_i + step_lon/2
+                            
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                            
                             if conc >= 10.0:
-                                if conc >= 100.0: col = "#800000"
-                                elif conc >= 50.0: col = "#FF0000"
-                                elif conc >= 40.0: col = "#FF8C00"
-                                elif conc >= 20.0: col = "#FFD700"
-                                else: col = "#FFFFE0"
-                                polvo_grid_kmz.append({"bounds": [[l_i, lo_i], [l_i + step_lat, lo_i + step_lon]], "color": col, "conc": conc})
-                            lo_i += step_lon
-                        l_i += step_lat
+                                # ESCALA CROMÁTICA SUAVE (Acorde a la imagen proporcionada)
+                                if conc >= 100.0: col = "#BD2328" # MÁXIMO
+                                elif conc >= 50.0: col = "#DC826C" # MUY ALTO
+                                elif conc >= 40.0: col = "#ECAE93" # ALTO
+                                elif conc >= 20.0: col = "#F6D2B9" # MEDIO
+                                else: col = "#FDF1E2" # BAJO
+                                
+                                # 1. Guardar para KMZ
+                                polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
+                                
+                                # 2. Crear cuadrado de Shapely para el Mapa y agrupar por color (Evita el colapso de Folium)
+                                p1 = (lon_i, lat_i)
+                                p2 = (lon_i + step_lon, lat_i)
+                                p3 = (lon_i + step_lon, lat_i + step_lat)
+                                p4 = (lon_i, lat_i + step_lat)
+                                poly = ShapelyPolygon([p1, p2, p3, p4])
+                                if not poly.is_valid: poly = poly.buffer(0)
+                                poligonos_color[col].append(poly)
+                                
+                            lon_i += step_lon
+                        lat_i += step_lat
                 
                 kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
                 st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
@@ -821,43 +838,20 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        # LIENZO DINÁMICO ESCALABLE SEGÚN POTENCIA (Q)
-        max_q = max([f["Q"] for f in focos_aire] + [0.1])
-        margen_lat = 0.004 + (max_q * 0.0015) 
-        margen_lon = 0.005 + (max_q * 0.0020)
-        
-        min_lat = min(f["lat"] for f in focos_aire) - margen_lat
-        max_lat = max(f["lat"] for f in focos_aire) + margen_lat
-        min_lon = min(f["lon"] for f in focos_aire) - margen_lon
-        max_lon = max(f["lon"] for f in focos_aire) + margen_lon
-        
-        lat_span = max_lat - min_lat
-        lon_span = max_lon - min_lon
-        
-        # RESOLUCIÓN DINÁMICA (MAX 1 SEGUNDO DE CÁLCULO INCLUSO PARA VOLADURAS)
-        step_lat = max(0.00015, lat_span / 55.0)
-        step_lon = max(0.00020, lon_span / 55.0)
-        
-        lat_i = min_lat
-        while lat_i <= max_lat:
-            lon_i = min_lon
-            while lon_i <= max_lon:
-                c_lat = lat_i + step_lat/2
-                c_lon = lon_i + step_lon/2
-                
-                concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
-                
-                if concentracion_nodo >= 10.0:
-                    if concentracion_nodo >= 100.0: color_bloque = "#800000"
-                    elif concentracion_nodo >= 50.0: color_bloque = "#FF0000"
-                    elif concentracion_nodo >= 40.0: color_bloque = "#FF8C00"
-                    elif concentracion_nodo >= 20.0: color_bloque = "#FFD700"
-                    else: color_bloque = "#FFFFE0"
+        # Dibujamos en el mapa los polígonos ya fusionados matemáticamente en la zona superior
+        for color, list_poly in poligonos_color.items():
+            if list_poly:
+                merged = unary_union(list_poly)
+                geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
+                for geom in geoms:
+                    coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
+                    if color == "#BD2328": lbl = "> 100 µg/m³"
+                    elif color == "#DC826C": lbl = "50 - 100 µg/m³"
+                    elif color == "#ECAE93": lbl = "40 - 50 µg/m³"
+                    elif color == "#F6D2B9": lbl = "20 - 40 µg/m³"
+                    else: lbl = "10 - 20 µg/m³"
                     
-                    caja_limites = [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]]
-                    folium.Rectangle(bounds=caja_limites, color=color_bloque, fill=True, fill_color=color_bloque, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {concentracion_nodo:.1f} µg/m³").add_to(fg_resultados_aire)
-                lon_i += step_lon
-            lat_i += step_lat
+                    folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -941,7 +935,7 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# LEYENDAS CROMÁTICAS FLOTANTES
+# --- LEYENDA HORIZONTAL FIJA CROMÁTICAMENTE SUAVIZADA ---
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
@@ -965,11 +959,11 @@ escala_polvo_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
     <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
-        <div><span style="display:inline-block; width:12px; height:12px; background:#FFFFE0; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#FFD700; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#FF8C00; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#FF0000; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#800000; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#FDF1E2; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#F6D2B9; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#ECAE93; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#DC826C; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#BD2328; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
     </div>
 </div>
 """
@@ -1012,7 +1006,7 @@ map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 estilos_capas = "<style>.leaflet-control-layers-expanded { padding: 6px 10px !important; } .leaflet-control-layers label { font-size: 12px !important; line-height: 1.2 !important; margin-bottom: 2px !important; } .leaflet-control-layers-selector { margin-top: 2px !important; margin-right: 5px !important; } .leaflet-control-layers-separator { margin: 4px 0 !important; }</style>"
 m.get_root().header.add_child(folium.Element(estilos_capas))
 
-# MAPA REDIMENSIONADO: 850 píxeles de alto para máxima comodidad
+# MAPA MÁS ALTO PARA TRABAJAR MEJOR
 map_output = st_folium(m, width=1200, height=850, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
 
 if map_output and map_output.get("last_active_drawing"):

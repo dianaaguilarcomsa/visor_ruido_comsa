@@ -3,7 +3,6 @@ import folium
 from folium.plugins import Draw, Fullscreen, MeasureControl, Geocoder
 from streamlit_folium import st_folium
 import math
-import numpy as np
 import zipfile
 import io
 import json
@@ -270,7 +269,18 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-# Esta función se mantiene sólo para evaluar puntos singulares y poblaciones
+# Función auxiliar rápida para dar un gradiente difuminado (9 niveles)
+def obtener_color_difuminado(conc):
+    if conc >= 100: return "#B7261E"
+    elif conc >= 80: return "#CB3D2A"
+    elif conc >= 70: return "#D8573D"
+    elif conc >= 60: return "#E07354"
+    elif conc >= 50: return "#E88F6D" # LIMITE 50
+    elif conc >= 40: return "#EEA988"
+    elif conc >= 30: return "#F3C4A5"
+    elif conc >= 20: return "#F9DCC5"
+    else: return "#FDF1E2"
+
 def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
     concentracion = 0.0
     for f in focos_aire:
@@ -647,14 +657,13 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                
-                # --- LA MAGIA: CÁLCULO VECTORIAL INSTANTÁNEO CON MALLA SÚPER FINA ---
                 polvo_grid_kmz = []
-                poligonos_color = {"#D65F4D": [], "#DF7662": [], "#E78D76": [], "#EEA48A": [], "#F5BA9D": []}
+                poligonos_color = {}
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
                     
+                    # --- SOLUCIÓN DEL LIENZO MATEMÁTICO GIGANTE PARA VOLADURAS ---
                     margen_lat = 0.015 + (max_q * 0.015) 
                     margen_lon = 0.020 + (max_q * 0.015)
                     
@@ -663,110 +672,91 @@ with st.sidebar:
                     min_lon = min(f["lon"] for f in focos_aire) - margen_lon
                     max_lon = max(f["lon"] for f in focos_aire) + margen_lon
                     
-                    # MALLA SÚPER FINA FIJA Y GARANTIZADA (El tamaño exacto que querías)
-                    step_lat = 0.00015
-                    step_lon = 0.00020
+                    lat_span = max_lat - min_lat
+                    lon_span = max_lon - min_lon
                     
-                    # Generamos la cuadrícula de una vez (miles de puntos al instante)
-                    lat_vec = np.arange(min_lat, max_lat + step_lat, step_lat)
-                    lon_vec = np.arange(min_lon, max_lon + step_lon, step_lon)
+                    # --- SOLUCIÓN DE RAPIDEZ CON MALLA FINA ---
+                    # Limitamos el número de iteraciones puras para que Python lo haga rápido,
+                    # manteniendo la definición de cuadrícula en el mapa final.
+                    step_lat = max(0.00015, lat_span / 85.0)
+                    step_lon = max(0.00020, lon_span / 85.0)
                     
-                    LON, LAT = np.meshgrid(lon_vec + step_lon/2, lat_vec + step_lat/2)
-                    CONC = np.zeros_like(LON)
+                    # Para optimizar las comprobaciones dentro del bucle
+                    dir_pluma = (viento_direccion + 180) % 360
+                    u_val = max(viento_velocidad, 0.5)
                     
-                    # Evaluamos físicamente la dispersión de todos los focos usando la API de Numpy
+                    # Pre-cálculo de focos
+                    focos_opt = []
                     for f in focos_aire:
-                        Q, H = f["Q"], f["H"]
-                        if Q <= 0: continue
-                        
-                        R = 6371000
-                        phi1 = np.radians(f["lat"])
-                        phi2 = np.radians(LAT)
-                        d_phi = np.radians(LAT - f["lat"])
-                        d_lam = np.radians(LON - f["lon"])
-                        
-                        a = np.sin(d_phi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(d_lam/2)**2
-                        a = np.clip(a, 0, 1)
-                        dist = 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-                        
-                        y = np.sin(d_lam) * np.cos(phi2)
-                        x = np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(d_lam)
-                        bearing = (np.degrees(np.arctan2(y, x)) + 360) % 360
-                        
-                        dir_pluma = (viento_direccion + 180) % 360
-                        angulo_relativo = np.radians(bearing - dir_pluma)
-                        
-                        dx = dist * np.cos(angulo_relativo)
-                        dy = dist * np.sin(angulo_relativo)
-                        
-                        sigma_y0 = 25.0 
-                        sigma_z0 = 5.0
-                        
-                        sigma_y = np.full_like(dx, sigma_y0)
-                        sigma_z = np.full_like(dx, sigma_z0)
-                        decay_x = np.zeros_like(dx)
-                        
-                        valid_mask = (dist >= 1.0) & (dist <= 10000.0)
-                        
-                        m_fwd = dx > 0
-                        sigma_y[m_fwd] = sigma_y0 + 0.35 * dx[m_fwd] * (1 + 0.0001 * dx[m_fwd])**(-0.5)
-                        sigma_z[m_fwd] = sigma_z0 + 0.08 * dx[m_fwd] * (1 + 0.0015 * dx[m_fwd])**(-0.5)
-                        decay_x[m_fwd] = 1.0
-                        
-                        m_bwd = (dx <= 0) & (dx >= -250)
-                        sigma_y[m_bwd] = sigma_y0 + 0.25 * np.abs(dx[m_bwd])
-                        decay_x[m_bwd] = np.exp(-(dx[m_bwd]**2) / (2 * 60.0**2))
-                        
-                        z = 1.5 
-                        u_val = max(viento_velocidad, 0.5)
-                        
-                        term_central = Q / (2 * np.pi * u_val * sigma_y * sigma_z)
-                        disp_horiz = np.exp(-(dy**2) / (2 * sigma_y**2))
-                        disp_vert = np.exp(-((z - H)**2) / (2 * sigma_z**2)) + np.exp(-((z + H)**2) / (2 * sigma_z**2))
-                        
-                        C_foco = term_central * disp_horiz * disp_vert * decay_x * 1000000
-                        CONC += np.where(valid_mask & (m_fwd | m_bwd), C_foco, 0)
-                        
-                    # Extraemos y agrupamos por colores
-                    rows, cols = CONC.shape
-                    for i in range(rows):
-                        for j in range(cols):
-                            conc = CONC[i, j]
-                            if conc >= 10.0:
-                                if conc >= 100.0: col = "#D65F4D" 
-                                elif conc >= 50.0: col = "#DF7662" 
-                                elif conc >= 40.0: col = "#E78D76" 
-                                elif conc >= 20.0: col = "#EEA48A" 
-                                else: col = "#F5BA9D" 
-                                
-                                if i < len(lat_vec) and j < len(lon_vec):
-                                    lat_i = lat_vec[i]
-                                    lon_i = lon_vec[j]
-                                    
-                                    polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
-                                    
-                                    p1 = (lon_i, lat_i)
-                                    p2 = (lon_i + step_lon, lat_i)
-                                    p3 = (lon_i + step_lon, lat_i + step_lat)
-                                    p4 = (lon_i, lat_i + step_lat)
-                                    poly = ShapelyPolygon([p1, p2, p3, p4])
-                                    if not poly.is_valid: poly = poly.buffer(0)
-                                    poligonos_color[col].append(poly)
-                                    
-                # Agrupamos los bloques en un solo polígono gigante por color para que no pese nada
-                for color, list_poly in poligonos_color.items():
-                    if list_poly:
-                        merged = unary_union(list_poly)
-                        geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
-                        for geom in geoms:
-                            coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
-                            if color == "#D65F4D": lbl = "> 100 µg/m³"
-                            elif color == "#DF7662": lbl = "50 - 100 µg/m³"
-                            elif color == "#E78D76": lbl = "40 - 50 µg/m³"
-                            elif color == "#EEA48A": lbl = "20 - 40 µg/m³"
-                            else: lbl = "10 - 20 µg/m³"
+                        if f["Q"] <= 0: continue
+                        focos_opt.append({
+                            "lat": f["lat"],
+                            "lon": f["lon"],
+                            "lat_rad": math.radians(f["lat"]),
+                            "H": f["H"],
+                            "term_const": f["Q"] / (2 * math.pi * u_val)
+                        })
+
+                    lat_i = min_lat
+                    while lat_i <= max_lat:
+                        lon_i = min_lon
+                        while lon_i <= max_lon:
+                            c_lat = lat_i + step_lat/2
+                            c_lon = lon_i + step_lon/2
                             
-                            folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
+                            # Filtro rápido para saltarse puntos exageradamente lejanos
+                            c_lat_rad = math.radians(c_lat)
+                            
+                            concentracion = 0.0
+                            for fo in focos_opt:
+                                dist = distancia_haversine(fo["lat"], fo["lon"], c_lat, c_lon)
+                                if dist < 1.0 or dist > 15000.0: continue 
+                                
+                                dLon = math.radians(c_lon - fo["lon"])
+                                y = math.sin(dLon) * math.cos(c_lat_rad)
+                                x = math.cos(fo["lat_rad"]) * math.sin(c_lat_rad) - math.sin(fo["lat_rad"]) * math.cos(c_lat_rad) * math.cos(dLon)
+                                bearing = (math.degrees(math.atan2(y, x)) + 360) % 360
+                                
+                                angulo_relativo = math.radians(bearing - dir_pluma)
+                                dx = dist * math.cos(angulo_relativo)
+                                dy = dist * math.sin(angulo_relativo)
+                                
+                                sigma_y0 = 25.0 
+                                sigma_z0 = 5.0
+                                
+                                if dx > 0: 
+                                    sigma_y = sigma_y0 + 0.35 * dx * (1 + 0.0001 * dx)**(-0.5)
+                                    sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
+                                    decay_x = 1.0
+                                else: 
+                                    if dx < -250: continue 
+                                    sigma_y = sigma_y0 + 0.25 * abs(dx) 
+                                    sigma_z = sigma_z0
+                                    decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
+                                
+                                disp_horiz = math.exp(-(dy**2) / (2 * sigma_y**2))
+                                disp_vert = math.exp(-((1.5 - fo["H"])**2) / (2 * sigma_z**2)) + math.exp(-((1.5 + fo["H"])**2) / (2 * sigma_z**2))
+                                
+                                concentracion += (fo["term_const"] / (sigma_y * sigma_z) * disp_horiz * disp_vert * decay_x) * 1000000
+
+                            if concentracion >= 10.0:
+                                # --- SOLUCIÓN DE MANCHA DIFUMINADA (GRADIENTE FINO DE 9 COLORES) ---
+                                col = obtener_color_difuminado(concentracion)
+                                
+                                polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": concentracion})
+                                
+                                p1 = (lon_i, lat_i)
+                                p2 = (lon_i + step_lon, lat_i)
+                                p3 = (lon_i + step_lon, lat_i + step_lat)
+                                p4 = (lon_i, lat_i + step_lat)
+                                poly = ShapelyPolygon([p1, p2, p3, p4])
+                                if not poly.is_valid: poly = poly.buffer(0)
+                                
+                                if col not in poligonos_color: poligonos_color[col] = []
+                                poligonos_color[col].append(poly)
+                                
+                            lon_i += step_lon
+                        lat_i += step_lat
                 
                 kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
                 st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
@@ -814,7 +804,7 @@ with st.sidebar:
                 informe_txt += "Anexo I del Real Decreto 102/2011, de 28 de enero, relativo a la mejora de la calidad del aire.\n"
                 informe_txt += "Límite Diario legal para protección de la salud humana: 50 µg/m³.\n\n"
                 informe_txt += "Se recomienda visualizar la cartografía en el Visor o KMZ para verificar la no afección a receptores sensibles "
-                informe_txt += "(El límite legal de 50 µg/m³ queda representado mediante el contorno de color rojo. De superarse en zonas habitadas, deberán aplicarse medidas de mitigación adicionales o paralizarse los trabajos).\n"
+                informe_txt += "(El límite legal de 50 µg/m³ queda representado mediante el contorno. De superarse en zonas habitadas, deberán aplicarse medidas de mitigación adicionales o paralizarse los trabajos).\n"
                 
                 st.download_button("📄 Descargar Informe Calidad del Aire (TXT)", data=informe_txt, file_name="informe_polvo.txt", mime="text/plain", use_container_width=True)
 
@@ -908,7 +898,27 @@ if modo_visor == "🔊 Vectores de Ruido":
                 coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
                 folium.Polygon(locations=coords_folium, color="red", fill=False, weight=3, dash_array="10, 10").add_to(fg_resultados_ruido)
 
-# La impresión del polvo en el mapa ya se ha gestionado arriba (con las variables poligonos_color) para mayor rendimiento.
+elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
+    if focos_aire:
+        # Se dibuja la malla fina fusionada dinámicamente con los 9 colores suavizados
+        for color, list_poly in poligonos_color.items():
+            if list_poly:
+                merged = unary_union(list_poly)
+                geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
+                for geom in geoms:
+                    coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
+                    
+                    if color == "#B7261E": lbl = "> 100 µg/m³"
+                    elif color == "#CB3D2A": lbl = "80 - 100 µg/m³"
+                    elif color == "#D8573D": lbl = "70 - 80 µg/m³"
+                    elif color == "#E07354": lbl = "60 - 70 µg/m³"
+                    elif color == "#E88F6D": lbl = "50 - 60 µg/m³"
+                    elif color == "#EEA988": lbl = "40 - 50 µg/m³"
+                    elif color == "#F3C4A5": lbl = "30 - 40 µg/m³"
+                    elif color == "#F9DCC5": lbl = "20 - 30 µg/m³"
+                    else: lbl = "10 - 20 µg/m³"
+                    
+                    folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -992,7 +1002,7 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- LEYENDA HORIZONTAL FIJA CROMÁTICAMENTE SUAVIZADA ---
+# --- LEYENDA HORIZONTAL FIJA CROMÁTICAMENTE SUAVIZADA (9 NIVELES) ---
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
@@ -1015,12 +1025,16 @@ escala_ruido_html = """
 escala_polvo_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
-    <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
+    <div style="display: flex; flex-direction: column; gap: 2px; font-size: 11px;">
         <div><span style="display:inline-block; width:12px; height:12px; background:#FDF1E2; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#F6D2B9; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#ECAE93; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#DC826C; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#BD2328; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#F9DCC5; border:1px solid #999;"></span> 20 - 30 (Moderado)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#F3C4A5; border:1px solid #999;"></span> 30 - 40</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#EEA988; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#E88F6D; border:1px solid #999;"></span> <b>50 - 60 (Incumple Límite RD)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#E07354; border:1px solid #999;"></span> 60 - 70</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#D8573D; border:1px solid #999;"></span> 70 - 80</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#CB3D2A; border:1px solid #999;"></span> 80 - 100</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#B7261E; border:1px solid #999;"></span> > 100 (Impacto Crítico)</div>
     </div>
 </div>
 """
@@ -1063,6 +1077,7 @@ map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 estilos_capas = "<style>.leaflet-control-layers-expanded { padding: 6px 10px !important; } .leaflet-control-layers label { font-size: 12px !important; line-height: 1.2 !important; margin-bottom: 2px !important; } .leaflet-control-layers-selector { margin-top: 2px !important; margin-right: 5px !important; } .leaflet-control-layers-separator { margin: 4px 0 !important; }</style>"
 m.get_root().header.add_child(folium.Element(estilos_capas))
 
+# MAPA MÁS ALTO (850 píxeles) PARA MAYOR COMODIDAD
 map_output = st_folium(m, width=1200, height=850, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
 
 if map_output and map_output.get("last_active_drawing"):

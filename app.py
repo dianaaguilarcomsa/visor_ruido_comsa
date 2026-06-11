@@ -646,7 +646,7 @@ with st.sidebar:
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 polvo_grid_kmz = []
-                poligonos_color = {"#D65F4D": [], "#DF7662": [], "#E78D76": [], "#EEA48A": [], "#F5BA9D": []}
+                poligonos_color = {"#D16248": [], "#D66F57": [], "#DC7D66": [], "#E18A75": [], "#E69884": []}
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
@@ -678,12 +678,12 @@ with st.sidebar:
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                             
                             if conc >= 10.0:
-                                # COLORES PASTEL SUAVIZADOS
-                                if conc >= 100.0: col = "#D65F4D" 
-                                elif conc >= 50.0: col = "#DF7662" 
-                                elif conc >= 40.0: col = "#E78D76" 
-                                elif conc >= 20.0: col = "#EEA48A" 
-                                else: col = "#F5BA9D" 
+                                # COLORES PASTEL SUAVIZADOS TIPO GRADIENTE HOMOGÉNEO
+                                if conc >= 100.0: col = "#D16248" 
+                                elif conc >= 50.0: col = "#D66F57" 
+                                elif conc >= 40.0: col = "#DC7D66" 
+                                elif conc >= 20.0: col = "#E18A75" 
+                                else: col = "#E69884" 
                                 
                                 polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
                                 
@@ -846,10 +846,10 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
                 for geom in geoms:
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
-                    if color == "#D65F4D": lbl = "> 100 µg/m³"
-                    elif color == "#DF7662": lbl = "50 - 100 µg/m³"
-                    elif color == "#E78D76": lbl = "40 - 50 µg/m³"
-                    elif color == "#EEA48A": lbl = "20 - 40 µg/m³"
+                    if color == "#D16248": lbl = "> 100 µg/m³"
+                    elif color == "#D66F57": lbl = "50 - 100 µg/m³"
+                    elif color == "#DC7D66": lbl = "40 - 50 µg/m³"
+                    elif color == "#E18A75": lbl = "20 - 40 µg/m³"
                     else: lbl = "10 - 20 µg/m³"
                     
                     folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
@@ -960,11 +960,11 @@ escala_polvo_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
     <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
-        <div><span style="display:inline-block; width:12px; height:12px; background:#F5BA9D; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#EEA48A; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#E78D76; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#DF7662; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#D65F4D; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#E69884; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#E18A75; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#DC7D66; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#D66F57; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#D16248; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
     </div>
 </div>
 """

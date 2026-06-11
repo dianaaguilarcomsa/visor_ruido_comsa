@@ -133,7 +133,7 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
         if "medidas_polvo" not in feature["properties"]: feature["properties"]["medidas_polvo"] = []
 
 # ==========================================
-# FUNCIONES MATEMÁTICAS
+# FUNCIONES MATEMÁTICAS (RUIDO Y POLVO)
 # ==========================================
 def sumar_decibelios(dic_maq):
     if not dic_maq: return 0
@@ -651,9 +651,8 @@ with st.sidebar:
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
                     
-                    # --- SOLUCIÓN AL CORTE MATEMÁTICO: MARGEN GIGANTE PARA VOLADURAS ---
-                    margen_lat = 0.035 + (max_q * 0.005) 
-                    margen_lon = 0.045 + (max_q * 0.005)
+                    margen_lat = 0.015 + (max_q * 0.015) 
+                    margen_lon = 0.020 + (max_q * 0.015)
                     
                     min_lat = min(f["lat"] for f in focos_aire) - margen_lat
                     max_lat = max(f["lat"] for f in focos_aire) + margen_lat
@@ -663,9 +662,10 @@ with st.sidebar:
                     lat_span = max_lat - min_lat
                     lon_span = max_lon - min_lon
                     
-                    # Malla fija y rápida de 60x60
-                    step_lat = lat_span / 60.0
-                    step_lon = lon_span / 60.0
+                    # RESOLUCIÓN DINÁMICA FINA: Cuadraditos pequeños para alta definición, 
+                    # usando max() aseguramos que no sean bloques gigantes.
+                    step_lat = max(0.00015, lat_span / 120.0)
+                    step_lon = max(0.00020, lon_span / 120.0)
                     
                     lat_i = min_lat
                     while lat_i <= max_lat:
@@ -758,7 +758,6 @@ centro = st.session_state["map_center"]
 zoom = st.session_state["map_zoom"]
 m = folium.Map(location=centro, zoom_start=zoom, tiles=None)
 
-# --- CAPA SATÉLITE AUTOMÁTICA EN POLVO ---
 show_osm = (modo_visor == "🔊 Vectores de Ruido")
 show_sat = (modo_visor == "💨 Calidad del Aire (Polvo PM10)")
 
@@ -985,8 +984,6 @@ columna_eea_html = """
 </div>
 """
 
-escala_activa = escala_ruido_html if modo_visor == "🔊 Vectores de Ruido" else escala_polvo_html
-
 leyendas_html = f"""
 <div style="position: fixed; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
@@ -1005,7 +1002,6 @@ map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 estilos_capas = "<style>.leaflet-control-layers-expanded { padding: 6px 10px !important; } .leaflet-control-layers label { font-size: 12px !important; line-height: 1.2 !important; margin-bottom: 2px !important; } .leaflet-control-layers-selector { margin-top: 2px !important; margin-right: 5px !important; } .leaflet-control-layers-separator { margin: 4px 0 !important; }</style>"
 m.get_root().header.add_child(folium.Element(estilos_capas))
 
-# MAPA REDIMENSIONADO: 850 Píxeles de alto
 map_output = st_folium(m, width=1200, height=850, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
 
 if map_output and map_output.get("last_active_drawing"):

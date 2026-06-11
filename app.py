@@ -35,7 +35,8 @@ st.markdown("""
     <div style="display: flex; flex-direction: column; align-items: flex-start; min-width: 120px;">
         <div style="display: flex; gap: 6px; margin-bottom: 2px;">
             <div style="width: 22px; height: 22px; background-color: #E3182D; border-radius: 50%;"></div>
-            <div style="width: 22px; height: 22px; background-color: #0093D0;"></div> </div>
+            <div style="width: 22px; height: 22px; background-color: #0093D0;"></div>
+        </div>
         <div style="color: var(--text-color); font-size: 28px; font-weight: 900; line-height: 1; letter-spacing: -1px;">COMSA</div>
         <div style="color: var(--text-color); opacity: 0.8; font-size: 11px; font-weight: 600; letter-spacing: 0.5px;">CORPORACIÓN</div>
     </div>
@@ -66,7 +67,6 @@ malla_fina_config = [
     {"min": 80, "color": "#295180"}
 ]
 
-# Todos los red_humedad homogeneizados a 0.50 (50% de reducción) para evitar confusiones
 actividades_polvo = {
     "Desbroce y limpieza del terreno": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 0.5},
     "Demolición mecánica de estructuras": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 3.0},
@@ -244,8 +244,6 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
 def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     q_total = 0.0
     h_max = 0.5
-    
-    # Análisis puramente matemático buscando las keywords
     aplica_riego = any("Riego" in m for m in medidas)
     aplica_velocidad = any("velocidad" in m for m in medidas)
     aplica_tapado = any("tapado" in m for m in medidas)
@@ -254,28 +252,22 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
 
     for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
-        
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
-            if aplica_riego: q = q * datos["red_humedad"] # 50% reduccion
-            
+            if aplica_riego: q = q * datos["red_humedad"]
             if "Tránsito" in act:
-                if aplica_velocidad: q = q * 0.60 # Reducción del 40%
-                if aplica_lavarruedas and "públicas" in act: q = q * 0.20 # Reducción del 80%
-                
-            if "Perforación" in act and aplica_captador: q = q * 0.15 # Reducción del 85%
-            
+                if aplica_velocidad: q = q * 0.60 
+                if aplica_lavarruedas and "públicas" in act: q = q * 0.20
+            if "Perforación" in act and aplica_captador: q = q * 0.15
         elif datos["metodo"] == "formula_caida":
             M = datos["M_humedo"] if aplica_riego else datos["M_seco"]
             k = datos["k"]
             q = k * 0.0016 * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
-            
-            if "Descarga" in act and aplica_tapado: q = q * 0.70 # Reducción del 30%
+            if "Descarga" in act and aplica_tapado: q = q * 0.70
             
         h = datos["H"]
         q_total += q
         h_max = max(h_max, h)
-        
     return q_total, h_max
 
 def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
@@ -285,7 +277,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         if Q <= 0: continue
         
         dist = distancia_haversine(f["lat"], f["lon"], lat_dest, lon_dest)
-        if dist < 1.0 or dist > 2500.0: continue # Optimización: descartar puntos lejísimos
+        if dist < 1.0 or dist > 5000.0: continue 
         
         dLon = math.radians(lon_dest - f["lon"])
         lat1, lat2 = math.radians(f["lat"]), math.radians(lat_dest)
@@ -307,12 +299,11 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
             decay_x = 1.0
         else: 
-            # --- SOLUCIÓN AL CORTE RECTO ---
-            # Ampliamos el límite trasero a -150 metros y suavizamos la curva matemática
-            if dx < -150: continue 
+            # --- SOLUCIÓN DEL BULBO TRASERO MÁS SUAVE ---
+            if dx < -250: continue 
             sigma_y = sigma_y0 + 0.25 * abs(dx) 
             sigma_z = sigma_z0
-            decay_x = math.exp(-(dx**2) / (2 * 40.0**2)) 
+            decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
         
         z = 1.5 
         
@@ -321,7 +312,6 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         disp_vert = math.exp(-((z - H)**2) / (2 * sigma_z**2)) + math.exp(-((z + H)**2) / (2 * sigma_z**2))
         
         concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
-        
     return concentracion
 
 def hex_to_kml_color(hex_color, alpha="60"):
@@ -334,7 +324,6 @@ def hex_to_kml_color(hex_color, alpha="60"):
 
 def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, modo="ruido", polvo_grid=None, viento_u=0, viento_dir=0):
     kml = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>', '<name>Resultados Visor Ambiental COMSA</name>']
-    
     if modo == "ruido":
         if isofonas_list:
             kml.append('<Folder><name>Mapas de Ondas de Ruido (Círculos)</name>')
@@ -658,19 +647,30 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                # --- SOLUCIÓN AL CORTE MATEMÁTICO: LIENZO MÁS GRANDE ---
+                # --- SOLUCIÓN DEL RENDIMIENTO Y EL CORTE RECTO ---
                 polvo_grid_kmz = []
                 if focos_aire:
-                    min_lat = min(f["lat"] for f in focos_aire) - 0.015
-                    max_lat = max(f["lat"] for f in focos_aire) + 0.015
-                    min_lon = min(f["lon"] for f in focos_aire) - 0.020
-                    max_lon = max(f["lon"] for f in focos_aire) + 0.020
-                    s_lat, s_lon = 0.00015, 0.00020
+                    # Lienzo dinámico escalable según la potencia del foco más bestia (ej. Voladuras)
+                    max_q = max([f["Q"] for f in focos_aire] + [0.1])
+                    margen_lat = 0.004 + (max_q * 0.0015) 
+                    margen_lon = 0.005 + (max_q * 0.0020)
+                    
+                    min_lat = min(f["lat"] for f in focos_aire) - margen_lat
+                    max_lat = max(f["lat"] for f in focos_aire) + margen_lat
+                    min_lon = min(f["lon"] for f in focos_aire) - margen_lon
+                    max_lon = max(f["lon"] for f in focos_aire) + margen_lon
+                    
+                    lat_span = max_lat - min_lat
+                    lon_span = max_lon - min_lon
+                    # Ajuste de resolución para que nunca tarde más de 1 segundo en pensar
+                    step_lat = max(0.00015, lat_span / 55.0)
+                    step_lon = max(0.00020, lon_span / 55.0)
+                    
                     l_i = min_lat
                     while l_i <= max_lat:
                         lo_i = min_lon
                         while lo_i <= max_lon:
-                            c_lat, c_lon = l_i + s_lat/2, lo_i + s_lon/2
+                            c_lat, c_lon = l_i + step_lat/2, lo_i + step_lon/2
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                             if conc >= 10.0:
                                 if conc >= 100.0: col = "#800000"
@@ -678,9 +678,9 @@ with st.sidebar:
                                 elif conc >= 40.0: col = "#FF8C00"
                                 elif conc >= 20.0: col = "#FFD700"
                                 else: col = "#FFFFE0"
-                                polvo_grid_kmz.append({"bounds": [[l_i, lo_i], [l_i + s_lat, lo_i + s_lon]], "color": col, "conc": conc})
-                            lo_i += s_lon
-                        l_i += s_lat
+                                polvo_grid_kmz.append({"bounds": [[l_i, lo_i], [l_i + step_lat, lo_i + step_lon]], "color": col, "conc": conc})
+                            lo_i += step_lon
+                        l_i += step_lat
                 
                 kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
                 st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
@@ -821,14 +821,22 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        # AUMENTO DEL LIENZO INVISIBLE PARA EVITAR CORTES MATEMÁTICOS
-        min_lat = min(f["lat"] for f in focos_aire) - 0.015
-        max_lat = max(f["lat"] for f in focos_aire) + 0.015
-        min_lon = min(f["lon"] for f in focos_aire) - 0.020
-        max_lon = max(f["lon"] for f in focos_aire) + 0.020
+        # LIENZO DINÁMICO ESCALABLE SEGÚN POTENCIA (Q)
+        max_q = max([f["Q"] for f in focos_aire] + [0.1])
+        margen_lat = 0.004 + (max_q * 0.0015) 
+        margen_lon = 0.005 + (max_q * 0.0020)
         
-        step_lat = 0.00015
-        step_lon = 0.00020
+        min_lat = min(f["lat"] for f in focos_aire) - margen_lat
+        max_lat = max(f["lat"] for f in focos_aire) + margen_lat
+        min_lon = min(f["lon"] for f in focos_aire) - margen_lon
+        max_lon = max(f["lon"] for f in focos_aire) + margen_lon
+        
+        lat_span = max_lat - min_lat
+        lon_span = max_lon - min_lon
+        
+        # RESOLUCIÓN DINÁMICA (MAX 1 SEGUNDO DE CÁLCULO INCLUSO PARA VOLADURAS)
+        step_lat = max(0.00015, lat_span / 55.0)
+        step_lon = max(0.00020, lon_span / 55.0)
         
         lat_i = min_lat
         while lat_i <= max_lat:
@@ -883,7 +891,7 @@ for pob in poblaciones:
                 if f["emision"] <= 0: continue
                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json)
                 if len(iso_coords_limite) >= 3:
-                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
+                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                     if shapely_poly.intersects(iso_poly): 
                         supera_umbral = True
@@ -933,6 +941,7 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
+# LEYENDAS CROMÁTICAS FLOTANTES
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
@@ -1003,7 +1012,7 @@ map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 estilos_capas = "<style>.leaflet-control-layers-expanded { padding: 6px 10px !important; } .leaflet-control-layers label { font-size: 12px !important; line-height: 1.2 !important; margin-bottom: 2px !important; } .leaflet-control-layers-selector { margin-top: 2px !important; margin-right: 5px !important; } .leaflet-control-layers-separator { margin: 4px 0 !important; }</style>"
 m.get_root().header.add_child(folium.Element(estilos_capas))
 
-# MAPA MÁS ALTO (HEIGHT 850)
+# MAPA REDIMENSIONADO: 850 píxeles de alto para máxima comodidad
 map_output = st_folium(m, width=1200, height=850, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
 
 if map_output and map_output.get("last_active_drawing"):

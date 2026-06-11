@@ -628,7 +628,7 @@ with st.sidebar:
                                 if f["emision"] <= 0: continue
                                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
                                 if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                                     if ShapelyPolygon(poly_coords).intersects(iso_poly): 
                                         supera_umbral = True; break
@@ -650,7 +650,6 @@ with st.sidebar:
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
-                    
                     margen_lat = 0.015 + (max_q * 0.015) 
                     margen_lon = 0.020 + (max_q * 0.015)
                     
@@ -662,8 +661,6 @@ with st.sidebar:
                     lat_span = max_lat - min_lat
                     lon_span = max_lon - min_lon
                     
-                    # RESOLUCIÓN DINÁMICA FINA: Cuadraditos pequeños para alta definición, 
-                    # usando max() aseguramos que no sean bloques gigantes.
                     step_lat = max(0.00015, lat_span / 120.0)
                     step_lon = max(0.00020, lon_span / 120.0)
                     
@@ -884,7 +881,7 @@ for pob in poblaciones:
                 if f["emision"] <= 0: continue
                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json)
                 if len(iso_coords_limite) >= 3:
-                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
+                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                     if shapely_poly.intersects(iso_poly): 
                         supera_umbral = True
@@ -983,6 +980,8 @@ columna_eea_html = """
     </div>
 </div>
 """
+
+escala_activa = escala_ruido_html if modo_visor == "🔊 Vectores de Ruido" else escala_polvo_html
 
 leyendas_html = f"""
 <div style="position: fixed; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">

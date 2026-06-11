@@ -628,7 +628,7 @@ with st.sidebar:
                                 if f["emision"] <= 0: continue
                                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
                                 if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
                                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                                     if ShapelyPolygon(poly_coords).intersects(iso_poly): 
                                         supera_umbral = True; break
@@ -645,38 +645,13 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                
-                # --- FUNCIONES DE INTERPOLACIÓN PARA MANCHA CONTINUA ---
-                def interpolar_color(c1, c2, t):
-                    r1, g1, b1 = int(c1[1:3], 16), int(c1[3:5], 16), int(c1[5:7], 16)
-                    r2, g2, b2 = int(c2[1:3], 16), int(c2[3:5], 16), int(c2[5:7], 16)
-                    r = int(r1 + (r2 - r1) * t)
-                    g = int(g1 + (g2 - g1) * t)
-                    b = int(b1 + (b2 - b1) * t)
-                    return f"#{r:02X}{g:02X}{b:02X}"
-
-                def obtener_color_suave(conc):
-                    if conc >= 100.0: return "#D65F4D"
-                    conc_suave = round(conc / 2.0) * 2.0
-                    if conc_suave >= 50.0: return interpolar_color("#DF7662", "#D65F4D", min((conc_suave - 50.0) / 50.0, 1.0))
-                    elif conc_suave >= 40.0: return interpolar_color("#E78D76", "#DF7662", (conc_suave - 40.0) / 10.0)
-                    elif conc_suave >= 20.0: return interpolar_color("#EEA48A", "#E78D76", (conc_suave - 20.0) / 20.0)
-                    else: return interpolar_color("#F5BA9D", "#EEA48A", min(max((conc_suave - 10.0) / 10.0, 0.0), 1.0))
-
-                def obtener_label_intervalo(conc):
-                    if conc >= 100.0: return "> 100 µg/m³"
-                    elif conc >= 50.0: return "50 - 100 µg/m³"
-                    elif conc >= 40.0: return "40 - 50 µg/m³"
-                    elif conc >= 20.0: return "20 - 40 µg/m³"
-                    else: return "10 - 20 µg/m³"
-                
                 polvo_grid_kmz = []
-                poligonos_color = {}
-                color_labels = {}
+                poligonos_color = {"#D65F4D": [], "#DF7662": [], "#E78D76": [], "#EEA48A": [], "#F5BA9D": []}
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
                     
+                    # MARGEN DINÁMICO QUE ASEGURA QUE LAS VOLADURAS NO SE CORTEN AL FINAL
                     margen_lat = 0.015 + (max_q * 0.015) 
                     margen_lon = 0.020 + (max_q * 0.015)
                     
@@ -688,6 +663,8 @@ with st.sidebar:
                     lat_span = max_lat - min_lat
                     lon_span = max_lon - min_lon
                     
+                    # --- LA MALLA FINA (TAMAÑO FIJO Y MUY PEQUEÑO, PERO CON LÍMITE DE PROTECCIÓN) ---
+                    # Al dividir entre 75.0 aseguramos que NUNCA pase de 5.625 cuadrados, bajando el cálculo a pocos segundos.
                     step_lat = max(0.00015, lat_span / 75.0)
                     step_lon = max(0.00020, lon_span / 75.0)
                     
@@ -701,8 +678,12 @@ with st.sidebar:
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                             
                             if conc >= 10.0:
-                                col = obtener_color_suave(conc)
-                                lbl = obtener_label_intervalo(conc)
+                                # COLORES PASTEL SUAVIZADOS
+                                if conc >= 100.0: col = "#D65F4D" 
+                                elif conc >= 50.0: col = "#DF7662" 
+                                elif conc >= 40.0: col = "#E78D76" 
+                                elif conc >= 20.0: col = "#EEA48A" 
+                                else: col = "#F5BA9D" 
                                 
                                 polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
                                 
@@ -712,10 +693,6 @@ with st.sidebar:
                                 p4 = (lon_i, lat_i + step_lat)
                                 poly = ShapelyPolygon([p1, p2, p3, p4])
                                 if not poly.is_valid: poly = poly.buffer(0)
-                                
-                                if col not in poligonos_color:
-                                    poligonos_color[col] = []
-                                    color_labels[col] = lbl
                                 poligonos_color[col].append(poly)
                                 
                             lon_i += step_lon
@@ -767,7 +744,7 @@ with st.sidebar:
                 informe_txt += "Anexo I del Real Decreto 102/2011, de 28 de enero, relativo a la mejora de la calidad del aire.\n"
                 informe_txt += "Límite Diario legal para protección de la salud humana: 50 µg/m³.\n\n"
                 informe_txt += "Se recomienda visualizar la cartografía en el Visor o KMZ para verificar la no afección a receptores sensibles "
-                informe_txt += "(El límite legal de 50 µg/m³ queda representado mediante el contorno. De superarse en zonas habitadas, deberán aplicarse medidas de mitigación adicionales o paralizarse los trabajos).\n"
+                informe_txt += "(El límite legal de 50 µg/m³ queda representado mediante el contorno de color rojo. De superarse en zonas habitadas, deberán aplicarse medidas de mitigación adicionales o paralizarse los trabajos).\n"
                 
                 st.download_button("📄 Descargar Informe Calidad del Aire (TXT)", data=informe_txt, file_name="informe_polvo.txt", mime="text/plain", use_container_width=True)
 
@@ -863,14 +840,18 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        # Dibujamos las manchas con los colores suaves ya generados
         for color, list_poly in poligonos_color.items():
             if list_poly:
                 merged = unary_union(list_poly)
                 geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
-                lbl = color_labels.get(color, "")
                 for geom in geoms:
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
+                    if color == "#D65F4D": lbl = "> 100 µg/m³"
+                    elif color == "#DF7662": lbl = "50 - 100 µg/m³"
+                    elif color == "#E78D76": lbl = "40 - 50 µg/m³"
+                    elif color == "#EEA48A": lbl = "20 - 40 µg/m³"
+                    else: lbl = "10 - 20 µg/m³"
+                    
                     folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
 
 for pob in poblaciones:
@@ -979,11 +960,11 @@ escala_polvo_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
     <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
-        <div><span style="display:inline-block; width:12px; height:12px; background:linear-gradient(to right, #FDF1E2, #F9DCC5); border:1px solid #999;"></span> 10 - 20 (Fondo)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:linear-gradient(to right, #F6D2B9, #ECAE93); border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:linear-gradient(to right, #ECAE93, #DF7662); border:1px solid #999;"></span> 40 - 50 (Alerta)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:linear-gradient(to right, #DF7662, #D65F4D); border:1px solid #999;"></span> <b>50 - 100 (Incumple)</b></div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#BD2328; border:1px solid #999;"></span> > 100 (Crítico)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#F5BA9D; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#EEA48A; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#E78D76; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#DF7662; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#D65F4D; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
     </div>
 </div>
 """

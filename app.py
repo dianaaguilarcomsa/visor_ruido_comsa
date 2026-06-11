@@ -848,10 +848,13 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     else: lbl = "10 - 20 µg/m³"
                     
                     # --- CAMBIO SOLICITADO AQUÍ ---
-                    # Se mantiene weight=0 pero se reduce fill_opacity radicalmente de 0.45 a 0.15
-                    # Con una transparencia tan alta, los bordes nítidos de cada celda se suavizan
-                    # mucho más al mezclarse con el fondo complejo del mapa de satélite.
-                    folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.15, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
+                    # Se habilitan los bordes pero se hacen gruesos y semi-transparentes
+                    # para simular un efecto difuso (fuzzy) sin degradar la nitidez del color de fondo.
+                    folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, 
+                                   fill_opacity=0.5, # Mantener relleno visible
+                                   weight=10, # Borde grueso
+                                   opacity=0.3, # Borde difuso
+                                   tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -978,7 +981,7 @@ columna_eea_html = """
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Silvestre</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat</div>
+        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFAA30; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Prot.</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Uso Sost.</div>
     </div>

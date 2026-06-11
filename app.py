@@ -3,7 +3,6 @@ import folium
 from folium.plugins import Draw, Fullscreen, MeasureControl, Geocoder
 from streamlit_folium import st_folium
 import math
-import numpy as np
 import zipfile
 import io
 import json
@@ -271,7 +270,6 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     return q_total, h_max
 
 def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
-    # (Esta función se mantiene igual solo para calcular puntos singulares como las poblaciones)
     concentracion = 0.0
     for f in focos_aire:
         Q, H = f["Q"], f["H"]
@@ -630,7 +628,7 @@ with st.sidebar:
                                 if f["emision"] <= 0: continue
                                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
                                 if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
                                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                                     if ShapelyPolygon(poly_coords).intersects(iso_poly): 
                                         supera_umbral = True; break
@@ -648,89 +646,29 @@ with st.sidebar:
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 polvo_grid_kmz = []
-                poligonos_color = {"#BD2328": [], "#DC826C": [], "#ECAE93": [], "#F6D2B9": [], "#FDF1E2": []}
-                
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
-                    
-                    margen_lat = 0.015 + (max_q * 0.015) 
-                    margen_lon = 0.020 + (max_q * 0.015)
+                    margen_lat = 0.006 + (max_q * 0.004) 
+                    margen_lon = 0.008 + (max_q * 0.005)
                     
                     min_lat = min(f["lat"] for f in focos_aire) - margen_lat
                     max_lat = max(f["lat"] for f in focos_aire) + margen_lat
                     min_lon = min(f["lon"] for f in focos_aire) - margen_lon
                     max_lon = max(f["lon"] for f in focos_aire) + margen_lon
                     
-                    lat_span = max_lat - min_lat
-                    lon_span = max_lon - min_lon
+                    # --- LA MALLA FINA (LA QUE TE GUSTA, FIJA) ---
+                    step_lat = 0.00015
+                    step_lon = 0.00020
                     
-                    # --- AQUÍ ESTÁ EL TRUCO DE LA ALTA VELOCIDAD Y LA ALTA DEFINICIÓN ---
-                    # Numpy calcula los 14,400 puntos en 0.05 segundos
-                    step_lat = max(0.00015, lat_span / 120.0)
-                    step_lon = max(0.00020, lon_span / 120.0)
-                    
-                    lat_vec = np.arange(min_lat, max_lat + step_lat, step_lat)
-                    lon_vec = np.arange(min_lon, max_lon + step_lon, step_lon)
-                    
-                    LON, LAT = np.meshgrid(lon_vec + step_lon/2, lat_vec + step_lat/2)
-                    CONC = np.zeros_like(LON)
-                    
-                    for f in focos_aire:
-                        Q, H = f["Q"], f["H"]
-                        if Q <= 0: continue
-                        
-                        R = 6371000
-                        phi1 = np.radians(f["lat"])
-                        phi2 = np.radians(LAT)
-                        d_phi = np.radians(LAT - f["lat"])
-                        d_lam = np.radians(LON - f["lon"])
-                        
-                        a = np.sin(d_phi/2)**2 + np.cos(phi1)*np.cos(phi2)*np.sin(d_lam/2)**2
-                        a = np.clip(a, 0, 1)
-                        dist = 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1-a))
-                        
-                        y = np.sin(d_lam) * np.cos(phi2)
-                        x = np.cos(phi1)*np.sin(phi2) - np.sin(phi1)*np.cos(phi2)*np.cos(d_lam)
-                        bearing = (np.degrees(np.arctan2(y, x)) + 360) % 360
-                        
-                        dir_pluma = (viento_direccion + 180) % 360
-                        angulo_relativo = np.radians(bearing - dir_pluma)
-                        
-                        dx = dist * np.cos(angulo_relativo)
-                        dy = dist * np.sin(angulo_relativo)
-                        
-                        sigma_y0 = 25.0 
-                        sigma_z0 = 5.0
-                        
-                        sigma_y = np.full_like(dx, sigma_y0)
-                        sigma_z = np.full_like(dx, sigma_z0)
-                        decay_x = np.zeros_like(dx)
-                        
-                        valid_mask = (dist >= 1.0) & (dist <= 10000.0)
-                        
-                        m_fwd = dx > 0
-                        sigma_y[m_fwd] = sigma_y0 + 0.35 * dx[m_fwd] * (1 + 0.0001 * dx[m_fwd])**(-0.5)
-                        sigma_z[m_fwd] = sigma_z0 + 0.08 * dx[m_fwd] * (1 + 0.0015 * dx[m_fwd])**(-0.5)
-                        decay_x[m_fwd] = 1.0
-                        
-                        m_bwd = (dx <= 0) & (dx >= -250)
-                        sigma_y[m_bwd] = sigma_y0 + 0.25 * np.abs(dx[m_bwd])
-                        decay_x[m_bwd] = np.exp(-(dx[m_bwd]**2) / (2 * 60.0**2))
-                        
-                        z = 1.5 
-                        u_val = max(viento_velocidad, 0.5)
-                        
-                        term_central = Q / (2 * np.pi * u_val * sigma_y * sigma_z)
-                        disp_horiz = np.exp(-(dy**2) / (2 * sigma_y**2))
-                        disp_vert = np.exp(-((z - H)**2) / (2 * sigma_z**2)) + np.exp(-((z + H)**2) / (2 * sigma_z**2))
-                        
-                        C_foco = term_central * disp_horiz * disp_vert * decay_x * 1000000
-                        CONC += np.where(valid_mask & (m_fwd | m_bwd), C_foco, 0)
-                        
-                    rows, cols = CONC.shape
-                    for i in range(rows):
-                        for j in range(cols):
-                            conc = CONC[i, j]
+                    lat_i = min_lat
+                    while lat_i <= max_lat:
+                        lon_i = min_lon
+                        while lon_i <= max_lon:
+                            c_lat = lat_i + step_lat/2
+                            c_lon = lon_i + step_lon/2
+                            
+                            conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                            
                             if conc >= 10.0:
                                 if conc >= 100.0: col = "#BD2328" 
                                 elif conc >= 50.0: col = "#DC826C" 
@@ -738,19 +676,9 @@ with st.sidebar:
                                 elif conc >= 20.0: col = "#F6D2B9" 
                                 else: col = "#FDF1E2" 
                                 
-                                if i < len(lat_vec) and j < len(lon_vec):
-                                    lat_i = lat_vec[i]
-                                    lon_i = lon_vec[j]
-                                    
-                                    polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
-                                    
-                                    p1 = (lon_i, lat_i)
-                                    p2 = (lon_i + step_lon, lat_i)
-                                    p3 = (lon_i + step_lon, lat_i + step_lat)
-                                    p4 = (lon_i, lat_i + step_lat)
-                                    poly = ShapelyPolygon([p1, p2, p3, p4])
-                                    if not poly.is_valid: poly = poly.buffer(0)
-                                    poligonos_color[col].append(poly)
+                                polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
+                            lon_i += step_lon
+                        lat_i += step_lat
                 
                 kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
                 st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
@@ -894,6 +822,47 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
+        max_q = max([f["Q"] for f in focos_aire] + [0.1])
+        margen_lat = 0.006 + (max_q * 0.004) 
+        margen_lon = 0.008 + (max_q * 0.005)
+        
+        min_lat = min(f["lat"] for f in focos_aire) - margen_lat
+        max_lat = max(f["lat"] for f in focos_aire) + margen_lat
+        min_lon = min(f["lon"] for f in focos_aire) - margen_lon
+        max_lon = max(f["lon"] for f in focos_aire) + margen_lon
+        
+        step_lat = 0.00015
+        step_lon = 0.00020
+        
+        poligonos_color = {"#BD2328": [], "#DC826C": [], "#ECAE93": [], "#F6D2B9": [], "#FDF1E2": []}
+        
+        lat_i = min_lat
+        while lat_i <= max_lat:
+            lon_i = min_lon
+            while lon_i <= max_lon:
+                c_lat = lat_i + step_lat/2
+                c_lon = lon_i + step_lon/2
+                
+                concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                
+                if concentracion_nodo >= 10.0:
+                    if concentracion_nodo >= 100.0: col = "#BD2328" 
+                    elif concentracion_nodo >= 50.0: col = "#DC826C" 
+                    elif concentracion_nodo >= 40.0: col = "#ECAE93" 
+                    elif concentracion_nodo >= 20.0: col = "#F6D2B9" 
+                    else: col = "#FDF1E2" 
+                    
+                    p1 = (lon_i, lat_i)
+                    p2 = (lon_i + step_lon, lat_i)
+                    p3 = (lon_i + step_lon, lat_i + step_lat)
+                    p4 = (lon_i, lat_i + step_lat)
+                    poly = ShapelyPolygon([p1, p2, p3, p4])
+                    if not poly.is_valid: poly = poly.buffer(0)
+                    poligonos_color[col].append(poly)
+                    
+                lon_i += step_lon
+            lat_i += step_lat
+            
         for color, list_poly in poligonos_color.items():
             if list_poly:
                 merged = unary_union(list_poly)
@@ -940,7 +909,7 @@ for pob in poblaciones:
                 if f["emision"] <= 0: continue
                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json)
                 if len(iso_coords_limite) >= 3:
-                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
+                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                     if shapely_poly.intersects(iso_poly): 
                         supera_umbral = True
@@ -990,7 +959,6 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- LEYENDA HORIZONTAL FIJA ---
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>

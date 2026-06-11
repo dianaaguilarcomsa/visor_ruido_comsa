@@ -66,34 +66,35 @@ malla_fina_config = [
     {"min": 80, "color": "#295180"}
 ]
 
+# Todos los red_humedad homogeneizados a 0.50 (50% de reducción) para evitar confusiones
 actividades_polvo = {
     "Desbroce y limpieza del terreno": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 0.5},
     "Demolición mecánica de estructuras": {"metodo": "factor_fijo", "base_g_s": 1.20, "red_humedad": 0.50, "H": 3.0},
-    "Fresado de pavimentos / Asfalto": {"metodo": "factor_fijo", "base_g_s": 0.95, "red_humedad": 0.40, "H": 0.2},
-    "Voladuras (Explosivos)": {"metodo": "factor_fijo", "base_g_s": 8.00, "red_humedad": 0.10, "H": 5.0},
+    "Fresado de pavimentos / Asfalto": {"metodo": "factor_fijo", "base_g_s": 0.95, "red_humedad": 0.50, "H": 0.2},
+    "Voladuras (Explosivos)": {"metodo": "factor_fijo", "base_g_s": 8.00, "red_humedad": 0.50, "H": 5.0},
     "Perforación de pilotes / micropilotes": {"metodo": "factor_fijo", "base_g_s": 0.60, "red_humedad": 0.50, "H": 0.5},
     "Desmonte pesado (Bulldozer)": {"metodo": "factor_fijo", "base_g_s": 1.50, "red_humedad": 0.50, "H": 1.0},
     "Nivelación de plataformas (Motoniveladora)": {"metodo": "factor_fijo", "base_g_s": 0.85, "red_humedad": 0.50, "H": 1.0},
     "Excavación y carga de tierras (Retro)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 2.0, "M_humedo": 8.0, "H": 2.0},
     "Descarga de camiones (acopios)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 2.0, "M_humedo": 8.0, "H": 1.5},
     "Compactación de tierras y subbases": {"metodo": "factor_fijo", "base_g_s": 1.10, "red_humedad": 0.50, "H": 0.5},
-    "Tránsito pesado por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 2.80, "red_humedad": 0.30, "H": 0.5},
-    "Tránsito ligero por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 0.80, "red_humedad": 0.40, "H": 0.5},
-    "Resuspensión en vías públicas pavimentadas": {"metodo": "factor_fijo", "base_g_s": 0.40, "red_humedad": 0.20, "H": 0.5},
-    "Corte de pavimentos / Hormigón": {"metodo": "factor_fijo", "base_g_s": 0.50, "red_humedad": 0.10, "H": 0.5},
-    "Chorro de arena (Sandblasting)": {"metodo": "factor_fijo", "base_g_s": 1.80, "red_humedad": 0.10, "H": 2.0},
+    "Tránsito pesado por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 2.80, "red_humedad": 0.50, "H": 0.5},
+    "Tránsito ligero por pistas de tierra": {"metodo": "factor_fijo", "base_g_s": 0.80, "red_humedad": 0.50, "H": 0.5},
+    "Resuspensión en vías públicas pavimentadas": {"metodo": "factor_fijo", "base_g_s": 0.40, "red_humedad": 0.50, "H": 0.5},
+    "Corte de pavimentos / Hormigón": {"metodo": "factor_fijo", "base_g_s": 0.50, "red_humedad": 0.50, "H": 0.5},
+    "Chorro de arena (Sandblasting)": {"metodo": "factor_fijo", "base_g_s": 1.80, "red_humedad": 0.50, "H": 2.0},
     "Cribado y machaqueo de áridos": {"metodo": "factor_fijo", "base_g_s": 3.50, "red_humedad": 0.50, "H": 2.5},
     "Descarga de balasto (Vagón/Tolva)": {"metodo": "formula_caida", "k": 0.35, "M_seco": 1.0, "M_humedo": 4.0, "H": 1.5},
     "Bateo y perfilado de vías ferroviarias": {"metodo": "factor_fijo", "base_g_s": 1.60, "red_humedad": 0.50, "H": 0.5}
 }
 
+# MEDIDAS PREVENTIVAS PURAMENTE MATEMÁTICAS CON PORCENTAJES VISIBLES
 opciones_medidas = [
-    "💧 Riego periódico de tierras y acopios (Min. 2 riegos/día)",
-    "🚷 Control de velocidad a 30 km/h en zona de obra",
-    "🚚 Transporte de material tapado y sin derrames",
-    "🔧 Ajuste de motores y registro ITV al día",
-    "💨 Equipos de perforación con captadores de polvo",
-    "🚿 Lavado de ruedas a la salida (Lavarruedas)"
+    "💧 Riego periódico de tierras y acopios (-50% emisión)",
+    "🚷 Control de velocidad a 30 km/h en zona de obra (-40% resuspensión en tránsito)",
+    "🚚 Transporte de material tapado y sin derrames (-30% en descargas)",
+    "💨 Equipos de perforación con captadores de polvo (-85% en perforación)",
+    "🚿 Lavado de ruedas a la salida (-80% resuspensión en vías públicas)"
 ]
 
 @st.cache_data(ttl=900)
@@ -243,30 +244,38 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
 def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     q_total = 0.0
     h_max = 0.5
-    aplica_riego = "💧 Riego periódico de tierras y acopios (Min. 2 riegos/día)" in medidas
-    aplica_velocidad = "🚷 Control de velocidad a 30 km/h en zona de obra" in medidas
-    aplica_tapado = "🚚 Transporte de material tapado y sin derrames" in medidas
-    aplica_captador = "💨 Equipos de perforación con captadores de polvo" in medidas
-    aplica_lavarruedas = "🚿 Lavado de ruedas a la salida (Lavarruedas)" in medidas
+    
+    # Análisis puramente matemático buscando las keywords
+    aplica_riego = any("Riego" in m for m in medidas)
+    aplica_velocidad = any("velocidad" in m for m in medidas)
+    aplica_tapado = any("tapado" in m for m in medidas)
+    aplica_captador = any("captadores" in m for m in medidas)
+    aplica_lavarruedas = any("Lavado" in m for m in medidas)
 
     for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
+        
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
-            if aplica_riego: q = q * datos["red_humedad"]
+            if aplica_riego: q = q * datos["red_humedad"] # 50% reduccion
+            
             if "Tránsito" in act:
-                if aplica_velocidad: q = q * 0.40 
-                if aplica_lavarruedas and "públicas" in act: q = q * 0.20
-            if "Perforación" in act and aplica_captador: q = q * 0.15
+                if aplica_velocidad: q = q * 0.60 # Reducción del 40%
+                if aplica_lavarruedas and "públicas" in act: q = q * 0.20 # Reducción del 80%
+                
+            if "Perforación" in act and aplica_captador: q = q * 0.15 # Reducción del 85%
+            
         elif datos["metodo"] == "formula_caida":
             M = datos["M_humedo"] if aplica_riego else datos["M_seco"]
             k = datos["k"]
             q = k * 0.0016 * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
-            if "Descarga" in act and aplica_tapado: q = q * 0.70
+            
+            if "Descarga" in act and aplica_tapado: q = q * 0.70 # Reducción del 30%
             
         h = datos["H"]
         q_total += q
         h_max = max(h_max, h)
+        
     return q_total, h_max
 
 def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
@@ -276,7 +285,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         if Q <= 0: continue
         
         dist = distancia_haversine(f["lat"], f["lon"], lat_dest, lon_dest)
-        if dist < 1.0: continue
+        if dist < 1.0 or dist > 2500.0: continue # Optimización: descartar puntos lejísimos
         
         dLon = math.radians(lon_dest - f["lon"])
         lat1, lat2 = math.radians(f["lat"]), math.radians(lat_dest)
@@ -298,10 +307,12 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
             decay_x = 1.0
         else: 
-            if dx < -70: continue 
+            # --- SOLUCIÓN AL CORTE RECTO ---
+            # Ampliamos el límite trasero a -150 metros y suavizamos la curva matemática
+            if dx < -150: continue 
             sigma_y = sigma_y0 + 0.25 * abs(dx) 
             sigma_z = sigma_z0
-            decay_x = math.exp(-(dx**2) / (2 * 25.0**2)) 
+            decay_x = math.exp(-(dx**2) / (2 * 40.0**2)) 
         
         z = 1.5 
         
@@ -310,6 +321,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         disp_vert = math.exp(-((z - H)**2) / (2 * sigma_z**2)) + math.exp(-((z + H)**2) / (2 * sigma_z**2))
         
         concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
+        
     return concentracion
 
 def hex_to_kml_color(hex_color, alpha="60"):
@@ -322,6 +334,7 @@ def hex_to_kml_color(hex_color, alpha="60"):
 
 def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, modo="ruido", polvo_grid=None, viento_u=0, viento_dir=0):
     kml = ['<?xml version="1.0" encoding="UTF-8"?>', '<kml xmlns="http://www.opengis.net/kml/2.2">', '<Document>', '<name>Resultados Visor Ambiental COMSA</name>']
+    
     if modo == "ruido":
         if isofonas_list:
             kml.append('<Folder><name>Mapas de Ondas de Ruido (Círculos)</name>')
@@ -460,7 +473,6 @@ with st.sidebar:
             umbral_referencia = st.number_input("Umbral de Referencia / Límite Común (dB):", value=65.0, step=1.0)
     else:
         with st.expander("🌤️ Meteorología y Viento", expanded=True):
-            # VIENTO EN TIEMPO REAL POR DEFECTO (index=0)
             origen_viento = st.radio("Origen de los datos meteorológicos:", ["📡 Tiempo Real (API Open-Meteo)", "🎛️ Manual (Deslizadores)"], index=0)
             if origen_viento == "📡 Tiempo Real (API Open-Meteo)":
                 lat_api, lon_api = st.session_state["map_center"]
@@ -551,7 +563,6 @@ with st.sidebar:
         coords = feature["geometry"]["coordinates"]
         props = feature["properties"]
         if tipo == "Point":
-            # SE AÑADE 'maq' COMPLETO PARA EL INFORME DE RUIDO
             focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"]), "maq": props.get("maq", {})})
             act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
             med_list = props.get("medidas_polvo", [])
@@ -569,11 +580,9 @@ with st.sidebar:
                 kmz_data = generar_kmz(focos, pantallas_data, poblaciones, [], modo="ruido")
                 st.download_button("⬇️ Descargar KMZ (Ruido)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
                 
-                # --- NUEVO Y MEJORADO: INFORME DE RUIDO PROFESIONAL ---
                 informe_ruido = "ESTUDIO ACÚSTICO: VECTORES DE RUIDO. FASE DE OBRA\n"
                 informe_ruido += "="*65 + "\n\n"
                 informe_ruido += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                
                 informe_ruido += "1. MARCO LEGAL Y METODOLOGÍA\n"
                 informe_ruido += "-"*55 + "\n"
                 informe_ruido += "Legislación de referencia: Ley 37/2003, del Ruido y Real Decreto 1367/2007.\n"
@@ -610,7 +619,6 @@ with st.sidebar:
                         poly_coords = pob["coords"]
                         c_lon, c_lat = ShapelyPolygon(poly_coords).centroid.x, ShapelyPolygon(poly_coords).centroid.y
                         max_ruido = 0
-                        # Lógica corregida para buscar el máximo ruido en los límites y el centro
                         puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
                         for pt in puntos_eval:
                             r_parciales = []
@@ -627,10 +635,8 @@ with st.sidebar:
                             if r_tot > max_ruido: max_ruido = r_tot
                             
                         supera_umbral = False
-                        if max_ruido > pob['umbral']: 
-                            supera_umbral = True
+                        if max_ruido > pob['umbral']: supera_umbral = True
                         else:
-                            # Verificación geométrica definitiva con isófona
                             for f in focos:
                                 if f["emision"] <= 0: continue
                                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
@@ -652,12 +658,13 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
+                # --- SOLUCIÓN AL CORTE MATEMÁTICO: LIENZO MÁS GRANDE ---
                 polvo_grid_kmz = []
                 if focos_aire:
-                    min_lat = min(f["lat"] for f in focos_aire) - 0.006
-                    max_lat = max(f["lat"] for f in focos_aire) + 0.006
-                    min_lon = min(f["lon"] for f in focos_aire) - 0.008
-                    max_lon = max(f["lon"] for f in focos_aire) + 0.008
+                    min_lat = min(f["lat"] for f in focos_aire) - 0.015
+                    max_lat = max(f["lat"] for f in focos_aire) + 0.015
+                    min_lon = min(f["lon"] for f in focos_aire) - 0.020
+                    max_lon = max(f["lon"] for f in focos_aire) + 0.020
                     s_lat, s_lon = 0.00015, 0.00020
                     l_i = min_lat
                     while l_i <= max_lat:
@@ -814,10 +821,11 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        min_lat = min(f["lat"] for f in focos_aire) - 0.006
-        max_lat = max(f["lat"] for f in focos_aire) + 0.006
-        min_lon = min(f["lon"] for f in focos_aire) - 0.008
-        max_lon = max(f["lon"] for f in focos_aire) + 0.008
+        # AUMENTO DEL LIENZO INVISIBLE PARA EVITAR CORTES MATEMÁTICOS
+        min_lat = min(f["lat"] for f in focos_aire) - 0.015
+        max_lat = max(f["lat"] for f in focos_aire) + 0.015
+        min_lon = min(f["lon"] for f in focos_aire) - 0.020
+        max_lon = max(f["lon"] for f in focos_aire) + 0.020
         
         step_lat = 0.00015
         step_lon = 0.00020
@@ -851,7 +859,6 @@ for pob in poblaciones:
     c_lon, c_lat = shapely_poly.centroid.x, shapely_poly.centroid.y
     
     if modo_visor == "🔊 Vectores de Ruido":
-        # --- NUEVA LOGICA DE EVALUACIÓN ESPACIAL DE POBLACIONES (MÁXIMO RUIDO + INTERSECCIÓN) ---
         max_ruido = 0
         puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
         for pt in puntos_eval:
@@ -876,7 +883,7 @@ for pob in poblaciones:
                 if f["emision"] <= 0: continue
                 iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json)
                 if len(iso_coords_limite) >= 3:
-                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
+                    iso_poly = ShapelyPolygon([(lon, lat) for lat, lon in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
                     if shapely_poly.intersects(iso_poly): 
                         supera_umbral = True
@@ -926,7 +933,6 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
-# --- NUEVA LEYENDA HORIZONTAL FLOTANTE ANCLADA AL VIEWPORT CON POSITION: FIXED ---
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
@@ -979,7 +985,6 @@ columna_eea_html = """
 
 escala_activa = escala_ruido_html if modo_visor == "🔊 Vectores de Ruido" else escala_polvo_html
 
-# USANDO POSITION: FIXED PARA ANCLARLO A LA VENTANA Y QUE NO SE HUNDA EN EL IFRAME
 leyendas_html = f"""
 <div style="position: fixed; top: 15px; left: 50%; transform: translateX(-50%); z-index: 10000; background: rgba(255, 255, 255, 0.95); padding: 8px 15px; border: 1px solid rgba(0,0,0,0.1); border-radius: 8px; font-family: sans-serif; font-size: 13px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 15px; pointer-events: none;">
     <b>🛠️ Herramientas</b> | 〰️ Pantalla | ⬟ Población | 📍 Foco
@@ -998,7 +1003,8 @@ map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
 estilos_capas = "<style>.leaflet-control-layers-expanded { padding: 6px 10px !important; } .leaflet-control-layers label { font-size: 12px !important; line-height: 1.2 !important; margin-bottom: 2px !important; } .leaflet-control-layers-selector { margin-top: 2px !important; margin-right: 5px !important; } .leaflet-control-layers-separator { margin: 4px 0 !important; }</style>"
 m.get_root().header.add_child(folium.Element(estilos_capas))
 
-map_output = st_folium(m, width=1200, height=650, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
+# MAPA MÁS ALTO (HEIGHT 850)
+map_output = st_folium(m, width=1200, height=850, use_container_width=True, key=map_key_actual, returned_objects=["last_active_drawing"], return_on_hover=False)
 
 if map_output and map_output.get("last_active_drawing"):
     nuevo_dibujo = map_output["last_active_drawing"]

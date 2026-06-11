@@ -646,19 +646,27 @@ with st.sidebar:
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 polvo_grid_kmz = []
+                poligonos_color = {"#D65F4D": [], "#DF7662": [], "#E78D76": [], "#EEA48A": [], "#F5BA9D": []}
+                
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
-                    margen_lat = 0.006 + (max_q * 0.004) 
-                    margen_lon = 0.008 + (max_q * 0.005)
+                    
+                    # MARGEN DINÁMICO QUE ASEGURA QUE LAS VOLADURAS NO SE CORTEN AL FINAL
+                    margen_lat = 0.015 + (max_q * 0.015) 
+                    margen_lon = 0.020 + (max_q * 0.015)
                     
                     min_lat = min(f["lat"] for f in focos_aire) - margen_lat
                     max_lat = max(f["lat"] for f in focos_aire) + margen_lat
                     min_lon = min(f["lon"] for f in focos_aire) - margen_lon
                     max_lon = max(f["lon"] for f in focos_aire) + margen_lon
                     
-                    # --- LA MALLA FINA (LA QUE TE GUSTA, FIJA) ---
-                    step_lat = 0.00015
-                    step_lon = 0.00020
+                    lat_span = max_lat - min_lat
+                    lon_span = max_lon - min_lon
+                    
+                    # --- LA MALLA FINA (TAMAÑO FIJO Y MUY PEQUEÑO, PERO CON LÍMITE DE PROTECCIÓN) ---
+                    # Al dividir entre 75.0 aseguramos que NUNCA pase de 5.625 cuadrados, bajando el cálculo a pocos segundos.
+                    step_lat = max(0.00015, lat_span / 75.0)
+                    step_lon = max(0.00020, lon_span / 75.0)
                     
                     lat_i = min_lat
                     while lat_i <= max_lat:
@@ -670,13 +678,23 @@ with st.sidebar:
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                             
                             if conc >= 10.0:
-                                if conc >= 100.0: col = "#BD2328" 
-                                elif conc >= 50.0: col = "#DC826C" 
-                                elif conc >= 40.0: col = "#ECAE93" 
-                                elif conc >= 20.0: col = "#F6D2B9" 
-                                else: col = "#FDF1E2" 
+                                # COLORES PASTEL SUAVIZADOS
+                                if conc >= 100.0: col = "#D65F4D" 
+                                elif conc >= 50.0: col = "#DF7662" 
+                                elif conc >= 40.0: col = "#E78D76" 
+                                elif conc >= 20.0: col = "#EEA48A" 
+                                else: col = "#F5BA9D" 
                                 
                                 polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
+                                
+                                p1 = (lon_i, lat_i)
+                                p2 = (lon_i + step_lon, lat_i)
+                                p3 = (lon_i + step_lon, lat_i + step_lat)
+                                p4 = (lon_i, lat_i + step_lat)
+                                poly = ShapelyPolygon([p1, p2, p3, p4])
+                                if not poly.is_valid: poly = poly.buffer(0)
+                                poligonos_color[col].append(poly)
+                                
                             lon_i += step_lon
                         lat_i += step_lat
                 
@@ -822,57 +840,16 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        max_q = max([f["Q"] for f in focos_aire] + [0.1])
-        margen_lat = 0.006 + (max_q * 0.004) 
-        margen_lon = 0.008 + (max_q * 0.005)
-        
-        min_lat = min(f["lat"] for f in focos_aire) - margen_lat
-        max_lat = max(f["lat"] for f in focos_aire) + margen_lat
-        min_lon = min(f["lon"] for f in focos_aire) - margen_lon
-        max_lon = max(f["lon"] for f in focos_aire) + margen_lon
-        
-        step_lat = 0.00015
-        step_lon = 0.00020
-        
-        poligonos_color = {"#BD2328": [], "#DC826C": [], "#ECAE93": [], "#F6D2B9": [], "#FDF1E2": []}
-        
-        lat_i = min_lat
-        while lat_i <= max_lat:
-            lon_i = min_lon
-            while lon_i <= max_lon:
-                c_lat = lat_i + step_lat/2
-                c_lon = lon_i + step_lon/2
-                
-                concentracion_nodo = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
-                
-                if concentracion_nodo >= 10.0:
-                    if concentracion_nodo >= 100.0: col = "#BD2328" 
-                    elif concentracion_nodo >= 50.0: col = "#DC826C" 
-                    elif concentracion_nodo >= 40.0: col = "#ECAE93" 
-                    elif concentracion_nodo >= 20.0: col = "#F6D2B9" 
-                    else: col = "#FDF1E2" 
-                    
-                    p1 = (lon_i, lat_i)
-                    p2 = (lon_i + step_lon, lat_i)
-                    p3 = (lon_i + step_lon, lat_i + step_lat)
-                    p4 = (lon_i, lat_i + step_lat)
-                    poly = ShapelyPolygon([p1, p2, p3, p4])
-                    if not poly.is_valid: poly = poly.buffer(0)
-                    poligonos_color[col].append(poly)
-                    
-                lon_i += step_lon
-            lat_i += step_lat
-            
         for color, list_poly in poligonos_color.items():
             if list_poly:
                 merged = unary_union(list_poly)
                 geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
                 for geom in geoms:
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
-                    if color == "#BD2328": lbl = "> 100 µg/m³"
-                    elif color == "#DC826C": lbl = "50 - 100 µg/m³"
-                    elif color == "#ECAE93": lbl = "40 - 50 µg/m³"
-                    elif color == "#F6D2B9": lbl = "20 - 40 µg/m³"
+                    if color == "#D65F4D": lbl = "> 100 µg/m³"
+                    elif color == "#DF7662": lbl = "50 - 100 µg/m³"
+                    elif color == "#E78D76": lbl = "40 - 50 µg/m³"
+                    elif color == "#EEA48A": lbl = "20 - 40 µg/m³"
                     else: lbl = "10 - 20 µg/m³"
                     
                     folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
@@ -959,6 +936,7 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
 
+# LEYENDAS CROMÁTICAS FLOTANTES
 escala_ruido_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Niveles de Ruido (dB)</div>
@@ -982,11 +960,11 @@ escala_polvo_html = """
 <div style="flex: 1; min-width: 200px; padding-right: 15px; border-right: 1px solid #ccc;">
     <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Concentración PM10 (µg/m³)</div>
     <div style="display: flex; flex-direction: column; gap: 4px; font-size: 11px;">
-        <div><span style="display:inline-block; width:12px; height:12px; background:#FDF1E2; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#F6D2B9; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#ECAE93; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#DC826C; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#BD2328; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#F5BA9D; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#EEA48A; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#E78D76; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#DF7662; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#D65F4D; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
     </div>
 </div>
 """

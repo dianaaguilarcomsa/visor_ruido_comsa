@@ -645,9 +645,8 @@ with st.sidebar:
                 st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
 
             elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                # --- SOLUCIÓN DEL RENDIMIENTO Y RESOLUCIÓN ALTA ---
                 polvo_grid_kmz = []
-                poligonos_color = {"#BD2328": [], "#DC826C": [], "#ECAE93": [], "#F6D2B9": [], "#FDF1E2": []}
+                poligonos_color = {}
                 
                 if focos_aire:
                     max_q = max([f["Q"] for f in focos_aire] + [0.1])
@@ -660,9 +659,21 @@ with st.sidebar:
                     min_lon = min(f["lon"] for f in focos_aire) - margen_lon
                     max_lon = max(f["lon"] for f in focos_aire) + margen_lon
                     
-                    # RESTAURAMOS LA MALLA FINA Y DE ALTA RESOLUCIÓN:
                     step_lat = 0.00015
                     step_lon = 0.00020
+                    
+                    def get_color_for_conc(c):
+                        stops = [(10.0, (253, 241, 226)), (20.0, (246, 210, 185)), (40.0, (236, 174, 147)), (50.0, (220, 130, 108)), (100.0, (189, 35, 40))]
+                        if c <= 10.0: return "#FDF1E2"
+                        if c >= 100.0: return "#BD2328"
+                        for i in range(4):
+                            if stops[i][0] <= c <= stops[i+1][0]:
+                                f = (c - stops[i][0]) / (stops[i+1][0] - stops[i][0])
+                                r = int(stops[i][1][0] + f * (stops[i+1][1][0] - stops[i][1][0]))
+                                g = int(stops[i][1][1] + f * (stops[i+1][1][1] - stops[i][1][1]))
+                                b = int(stops[i][1][2] + f * (stops[i+1][1][2] - stops[i][1][2]))
+                                return f"#{r:02X}{g:02X}{b:02X}"
+                        return "#BD2328"
                     
                     lat_i = min_lat
                     while lat_i <= max_lat:
@@ -674,11 +685,17 @@ with st.sidebar:
                             conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                             
                             if conc >= 10.0:
-                                if conc >= 100.0: col = "#BD2328" 
-                                elif conc >= 50.0: col = "#DC826C" 
-                                elif conc >= 40.0: col = "#ECAE93" 
-                                elif conc >= 20.0: col = "#F6D2B9" 
-                                else: col = "#FDF1E2" 
+                                conc_level = round(conc, 0)
+                                col = get_color_for_conc(conc_level)
+                                
+                                if conc >= 100.0: lbl = "> 100 µg/m³"
+                                elif conc >= 50.0: lbl = "50 - 100 µg/m³"
+                                elif conc >= 40.0: lbl = "40 - 50 µg/m³"
+                                elif conc >= 20.0: lbl = "20 - 40 µg/m³"
+                                else: lbl = "10 - 20 µg/m³"
+                                
+                                key = (col, lbl)
+                                if key not in poligonos_color: poligonos_color[key] = []
                                 
                                 polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
                                 
@@ -688,7 +705,7 @@ with st.sidebar:
                                 p4 = (lon_i, lat_i + step_lat)
                                 poly = ShapelyPolygon([p1, p2, p3, p4])
                                 if not poly.is_valid: poly = poly.buffer(0)
-                                poligonos_color[col].append(poly)
+                                poligonos_color[key].append(poly)
                                 
                             lon_i += step_lon
                         lat_i += step_lat
@@ -835,26 +852,13 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
-        for color, list_poly in poligonos_color.items():
+        for (color, lbl), list_poly in poligonos_color.items():
             if list_poly:
                 merged = unary_union(list_poly)
                 geoms = [merged] if merged.geom_type == 'Polygon' else merged.geoms
                 for geom in geoms:
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
-                    if color == "#BD2328": lbl = "> 100 µg/m³"
-                    elif color == "#DC826C": lbl = "50 - 100 µg/m³"
-                    elif color == "#ECAE93": lbl = "40 - 50 µg/m³"
-                    elif color == "#F6D2B9": lbl = "20 - 40 µg/m³"
-                    else: lbl = "10 - 20 µg/m³"
-                    
-                    # --- CAMBIO SOLICITADO AQUÍ ---
-                    # Se habilitan los bordes pero se hacen gruesos y semi-transparentes
-                    # para simular un efecto difuso (fuzzy) sin degradar la nitidez del color de fondo.
-                    folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, 
-                                   fill_opacity=0.5, # Mantener relleno visible
-                                   weight=10, # Borde grueso
-                                   opacity=0.3, # Borde difuso
-                                   tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
+                    folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -981,7 +985,7 @@ columna_eea_html = """
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Silvestre</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFAA30; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat</div>
+        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Prot.</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Uso Sost.</div>
     </div>

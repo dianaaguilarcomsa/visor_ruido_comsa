@@ -561,10 +561,9 @@ with st.sidebar:
         elif tipo == "Polygon":
             poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
 
-    # --- AÑADIDO: Declarar los JSON aquí para que existan antes del reporte ---
+    # --- JSON Generados aquí para arreglar el error del NameError ---
     pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
     focos_json = json.dumps(focos, default=safe_serialize)
-    # --------------------------------------------------------------------------
 
     with st.expander("📥 3. Exportación y Reportes", expanded=False):
         if st.session_state["mis_dibujos"]:
@@ -765,12 +764,11 @@ with st.sidebar:
                 
                 st.download_button("📄 Descargar Informe Calidad del Aire (TXT)", data=informe_txt, file_name="informe_polvo.txt", mime="text/plain", use_container_width=True)
 
-    if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
-        st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
-    if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
+    # --- Botón de Limpiar con KEY única para arreglar el Duplicate ID ---
+    if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True, key="btn_limpiar_mapa_unico"):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
 
-    # --- AÑADIDO: Enlaces a visores externos ---
+    # --- Enlaces Visores Externos ---
     st.write("---")
     st.markdown("### 🔗 Visores de Interés")
     st.markdown("""
@@ -778,7 +776,6 @@ with st.sidebar:
     * [🗺️ Visores Cartográficos (IGN/IDEE)](https://www.ign.es/web/ign/portal/ide-area-nodos-ide)
     * [🏢 Sede Electrónica del Catastro](https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx)
     """)
-    # -------------------------------------------
 
 col1, col2, col3 = st.columns(3)
 col1.metric("📍 Focos Activos", len(focos))
@@ -812,7 +809,6 @@ fg_resultados_aire = folium.FeatureGroup(name="💨 Dispersión de Polvo (PM10)"
 fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones Evaluadas").add_to(m)
 fg_pantallas = folium.FeatureGroup(name="〰️ Pantallas Acústicas").add_to(m)
 fg_focos = folium.FeatureGroup(name="📍 Focos de Obra").add_to(m)
-
 
 css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
 

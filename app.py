@@ -558,8 +558,13 @@ with st.sidebar:
             focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v, "medidas": med_list, "actividades": act_list})
         elif tipo == "LineString":
             pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
-        elif tipo == "Polygon":
+        eelif tipo == "Polygon":
             poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
+
+    # --- AÑADIDO: Declarar los JSON aquí para que existan antes del reporte ---
+    pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
+    focos_json = json.dumps(focos, default=safe_serialize)
+    # --------------------------------------------------------------------------
 
     with st.expander("📥 3. Exportación y Reportes", expanded=False):
         if st.session_state["mis_dibujos"]:
@@ -762,6 +767,18 @@ with st.sidebar:
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
+    if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True):
+        st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
+
+    # --- AÑADIDO: Enlaces a visores externos ---
+    st.write("---")
+    st.markdown("### 🔗 Visores de Interés")
+    st.markdown("""
+    * [🌐 Visor SIOSE (Ocupación del Suelo)](https://www.siose.es/)
+    * [🗺️ Visores Cartográficos (IGN/IDEE)](https://www.ign.es/web/ign/portal/ide-area-nodos-ide)
+    * [🏢 Sede Electrónica del Catastro](https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx)
+    """)
+    # -------------------------------------------
 
 col1, col2, col3 = st.columns(3)
 col1.metric("📍 Focos Activos", len(focos))
@@ -796,8 +813,7 @@ fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones Evaluadas").add_to(m
 fg_pantallas = folium.FeatureGroup(name="〰️ Pantallas Acústicas").add_to(m)
 fg_focos = folium.FeatureGroup(name="📍 Focos de Obra").add_to(m)
 
-pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
-focos_json = json.dumps(focos, default=safe_serialize)
+
 css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
 
 if modo_visor == "🔊 Vectores de Ruido":

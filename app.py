@@ -558,7 +558,7 @@ with st.sidebar:
             focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v, "medidas": med_list, "actividades": act_list})
         elif tipo == "LineString":
             pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
-        eelif tipo == "Polygon":
+        elif tipo == "Polygon":
             poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
 
     # --- AÑADIDO: Declarar los JSON aquí para que existan antes del reporte ---

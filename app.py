@@ -773,7 +773,7 @@ with st.sidebar:
     st.markdown("### 🔗 Visores de Interés")
     st.markdown("""
     * [🌐 Visor SIOSE (Ocupación del Suelo)](https://www.siose.es/)
-    * [🗺️ Visores Cartográficos (IGN/IDEE)](https://www.ign.es/web/ign/portal/ide-area-nodos-ide)
+    * [🗺️ Visores Cartográficos (MITECO)](https://www.miteco.gob.es/es/biodiversidad/servicios/banco-datos-naturaleza/bdn-visores.html)
     * [🏢 Sede Electrónica del Catastro](https://www1.sedecatastro.gob.es/Cartografia/mapa.aspx)
     """)
 

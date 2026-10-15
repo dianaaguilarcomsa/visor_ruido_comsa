@@ -51,6 +51,7 @@ def safe_serialize(obj):
     return str(obj)
 
 if "mis_dibujos" not in st.session_state: st.session_state["mis_dibujos"] = []
+if "capas_fondo" not in st.session_state: st.session_state["capas_fondo"] = []
 if "map_version" not in st.session_state: st.session_state["map_version"] = 0
 if "map_center" not in st.session_state: st.session_state["map_center"] = [40.4410, -3.6908]
 if "map_zoom" not in st.session_state: st.session_state["map_zoom"] = 15
@@ -312,8 +313,12 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
     return concentracion
 
-def hex_to_kml_color(hex_color, alpha="60"):
-    colores_basicos = {"green": "00ff00", "orange": "00a5ff", "red": "0000ff"}
+def hex_to_kml_color(hex_color, alpha="80"):
+    # En KML el color es AABBGGRR
+    colores_basicos = {
+        "green": "008000", "orange": "FFA500", "red": "FF0000", 
+        "black": "000000", "blue": "0000FF", "white": "FFFFFF"
+    }
     hex_clean = colores_basicos.get(hex_color.lower(), hex_color.replace("#", ""))
     if len(hex_clean) == 6:
         r, g, b = hex_clean[0:2], hex_clean[2:4], hex_clean[4:6]
@@ -326,11 +331,11 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
         if isofonas_list:
             kml.append('<Folder><name>Mapas de Ondas de Ruido (Círculos)</name>')
             for iso in isofonas_list:
-                kml_color = hex_to_kml_color(iso["color"], alpha="50")
+                kml_color = hex_to_kml_color(iso["color"], alpha="80")
                 kml.append('<Placemark>')
                 kml.append(f'<name>{iso["name"]}</name>')
                 kml.append(f'<Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>{kml_color}</color><width>1</width></LineStyle></Style>')
-                kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
+                kml.append('<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>')
                 coord_str = " ".join([f"{lon},{lat},0" for lat, lon in iso["coords"]])
                 coord_str += f" {iso['coords'][0][1]},{iso['coords'][0][0]},0"
                 kml.append(coord_str)
@@ -342,14 +347,14 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
         if polvo_grid:
             kml.append('<Folder><name>Malla de Dispersión PM10 (RD 102/2011)</name>')
             for celda in polvo_grid:
-                kml_color = hex_to_kml_color(celda["color"], alpha="80")
+                kml_color = hex_to_kml_color(celda["color"], alpha="99")
                 b = celda["bounds"]
                 lat1, lon1, lat2, lon2 = b[0][0], b[0][1], b[1][0], b[1][1]
                 c_str = f"{lon1},{lat1},0 {lon2},{lat1},0 {lon2},{lat2},0 {lon1},{lat2},0 {lon1},{lat1},0"
                 kml.append('<Placemark>')
                 kml.append(f'<name>{celda["conc"]:.1f} ug/m3</name>')
                 kml.append(f'<Style><PolyStyle><color>{kml_color}</color><fill>1</fill><outline>0</outline></PolyStyle></Style>')
-                kml.append(f'<Polygon><outerBoundaryIs><LinearRing><coordinates>{c_str}</coordinates></LinearRing></outerBoundaryIs></Polygon>')
+                kml.append(f'<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>{c_str}</coordinates></LinearRing></outerBoundaryIs></Polygon>')
                 kml.append('</Placemark>')
             kml.append('</Folder>')
 
@@ -367,7 +372,7 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
         kml.append(f'<name>{p["name"]}</name>')
         kml.append(f'<description>Pantalla Acústica\nAtenuación: {p["aten"]:.1f} dB</description>')
         kml.append('<Style><LineStyle><color>ffffff00</color><width>6</width></LineStyle></Style>')
-        kml.append('<LineString><coordinates>')
+        kml.append('<LineString><tessellate>1</tessellate><coordinates>')
         kml.append(" ".join([f"{lon},{lat},0" for lon, lat in p["coords"]]))
         kml.append('</coordinates></LineString>')
         kml.append('</Placemark>')
@@ -377,7 +382,7 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
         kml.append(f'<name>{pob["name"]}</name>')
         kml.append(f'<description>Núcleo Receptor | Umbral: {pob.get("umbral", 65.0)}</description>')
         kml.append('<Style><PolyStyle><color>7f00ff00</color><fill>1</fill><outline>1</outline></PolyStyle><LineStyle><color>ff00ff00</color><width>2</width></LineStyle></Style>')
-        kml.append('<Polygon><outerBoundaryIs><LinearRing><coordinates>')
+        kml.append('<Polygon><tessellate>1</tessellate><outerBoundaryIs><LinearRing><coordinates>')
         kml.append(" ".join([f"{lon},{lat},0" for lon, lat in pob["coords"]]))
         kml.append(f' {pob["coords"][0][0]},{pob["coords"][0][1]},0')
         kml.append('</coordinates></LinearRing></outerBoundaryIs></Polygon>')
@@ -435,6 +440,36 @@ with st.sidebar:
                         else: st.warning("No se encontraron geometrías válidas.")
                     else: st.error("Archivo vacío.")
                 except Exception as e: st.error(f"Error: {e}")
+
+    # NUEVO: Capas de fondo (Ámbito de obra)
+    with st.expander("🗺️ Capa de Fondo (Ámbito de Obra)", expanded=False):
+        st.caption("Sube un KML/KMZ puramente visual para ubicar la obra (no se computa como foco o pantalla).")
+        archivo_fondo = st.file_uploader("📂 Importar Ámbito (.kmz, .kml)", type=["kmz", "kml"], key="fondo_uploader")
+        if archivo_fondo is not None:
+            try:
+                file_bytes = archivo_fondo.getvalue()
+                kml_texto = ""
+                try:
+                    with zipfile.ZipFile(io.BytesIO(file_bytes)) as zf:
+                        kml_internos = [f for f in zf.namelist() if f.lower().endswith('.kml')]
+                        if kml_internos: kml_texto = zf.read(kml_internos[0]).decode('utf-8', errors='ignore')
+                except zipfile.BadZipFile: kml_texto = file_bytes.decode('utf-8', errors='ignore')
+                
+                if kml_texto:
+                    dibujos_fondo = parsear_kml_a_dibujos(kml_texto)
+                    if dibujos_fondo:
+                        if st.button("🗺️ Cargar al Mapa como Fondo", use_container_width=True):
+                            st.session_state["capas_fondo"].extend(dibujos_fondo)
+                            st.session_state["map_version"] += 1
+                            st.rerun()
+            except Exception as e: st.error(f"Error procesando fondo: {e}")
+            
+        if st.session_state["capas_fondo"]:
+            st.success(f"Cargados {len(st.session_state['capas_fondo'])} elementos de fondo.")
+            if st.button("🗑️ Limpiar Capa de Fondo", use_container_width=True):
+                st.session_state["capas_fondo"] = []
+                st.session_state["map_version"] += 1
+                st.rerun()
 
     with st.expander("📚 Leyendas Capas Oficiales (SIOSE / ADIF)", expanded=False):
         st.markdown("**Límites Legales de Ruido (España / ADIF):**")
@@ -544,6 +579,7 @@ with st.sidebar:
                         st.caption("Límite Diario PM10 (RD 102/2011): **50 µg/m³** (Límite normativo de protección a la salud).")
                 st.write("---")
 
+    # Extraer variables para el mapa y exportaciones
     focos, pantallas_data, poblaciones, focos_aire = [], [], [], []
     for feature in st.session_state["mis_dibujos"]:
         tipo = feature["geometry"]["type"]
@@ -561,214 +597,12 @@ with st.sidebar:
         elif tipo == "Polygon":
             poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
 
-    # --- JSON Generados aquí para arreglar el error del NameError ---
     pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
     focos_json = json.dumps(focos, default=safe_serialize)
 
-    with st.expander("📥 3. Exportación y Reportes", expanded=False):
-        if st.session_state["mis_dibujos"]:
-            if modo_visor == "🔊 Vectores de Ruido":
-                kmz_data = generar_kmz(focos, pantallas_data, poblaciones, [], modo="ruido")
-                st.download_button("⬇️ Descargar KMZ (Ruido)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
-                
-                informe_ruido = "ESTUDIO ACÚSTICO: VECTORES DE RUIDO. FASE DE OBRA\n"
-                informe_ruido += "="*65 + "\n\n"
-                informe_ruido += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                informe_ruido += "1. MARCO LEGAL Y METODOLOGÍA\n"
-                informe_ruido += "-"*55 + "\n"
-                informe_ruido += "Legislación de referencia: Ley 37/2003, del Ruido y Real Decreto 1367/2007.\n"
-                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores evaluando atenuación por divergencia geométrica y difracción/absorción por pantallas acústicas interpuestas.\n\n"
-                
-                informe_ruido += "2. INVENTARIO DE FOCOS SONOROS (MAQUINARIA)\n"
-                informe_ruido += "-"*55 + "\n"
-                if focos:
-                    for i, f in enumerate(focos):
-                        informe_ruido += f"Foco {i+1}: {f['name']}\n"
-                        informe_ruido += f"  - Emisión Acústica Total Combinada: {f['emision']:.1f} dB(A)\n"
-                        if f['maq']:
-                            informe_ruido += "  - Maquinaria operativa en este foco (Nivel de potencia sonora Lw):\n"
-                            for m_name, m_db in f['maq'].items():
-                                informe_ruido += f"      * {m_name}: {m_db} dB(A)\n"
-                        else:
-                            informe_ruido += "  - Maquinaria operativa: No especificada manualmente.\n"
-                        informe_ruido += "\n"
-                else: 
-                    informe_ruido += " No se han modelizado focos sonoros.\n\n"
-                
-                informe_ruido += "3. MEDIDAS CORRECTORAS (PANTALLAS ACÚSTICAS)\n"
-                informe_ruido += "-"*55 + "\n"
-                if pantallas_data:
-                    for p in pantallas_data: 
-                        informe_ruido += f" - Barrera '{p['name']}': Atenuación teórica configurada de {p['aten']} dB(A)\n"
-                else: 
-                    informe_ruido += " No se han dispuesto pantallas acústicas para esta simulación.\n"
-                
-                informe_ruido += "\n4. AFECCIÓN A RECEPTORES SENSIBLES (POBLACIÓN)\n"
-                informe_ruido += "-"*55 + "\n"
-                if poblaciones:
-                    for pob in poblaciones:
-                        poly_coords = pob["coords"]
-                        c_lon, c_lat = ShapelyPolygon(poly_coords).centroid.x, ShapelyPolygon(poly_coords).centroid.y
-                        max_ruido = 0
-                        puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
-                        for pt in puntos_eval:
-                            r_parciales = []
-                            for f in focos:
-                                if f["emision"] <= 0: continue
-                                dist = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
-                                lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
-                                at_ap = 0
-                                for p in pantallas_data:
-                                    if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
-                                ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
-                                r_parciales.append(ruido_foco)
-                            r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
-                            if r_tot > max_ruido: max_ruido = r_tot
-                            
-                        supera_umbral = False
-                        if max_ruido > pob['umbral']: supera_umbral = True
-                        else:
-                            for f in focos:
-                                if f["emision"] <= 0: continue
-                                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
-                                if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
-                                    if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
-                                    if ShapelyPolygon(poly_coords).intersects(iso_poly): 
-                                        supera_umbral = True; break
-
-                        estado = "INCUMPLE (Supera límite legal)" if supera_umbral else "CUMPLE"
-                        informe_ruido += f" - Receptor Analizado: {pob['name']}\n"
-                        informe_ruido += f"   * Uso del Suelo: {pob['uso_nombre']} (Límite Legal: {pob['umbral']} dB)\n"
-                        informe_ruido += f"   * Ruido Máximo Estimado en Fachada/Límite: {max_ruido:.1f} dB(A)\n"
-                        informe_ruido += f"   * ESTADO NORMATIVO: {estado}\n\n"
-                else: 
-                    informe_ruido += " No se han modelizado núcleos receptores sensibles.\n"
-                
-                st.write("---")
-                st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
-
-            elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
-                polvo_grid_kmz = []
-                poligonos_color = {}
-                
-                if focos_aire:
-                    max_q = max([f["Q"] for f in focos_aire] + [0.1])
-                    
-                    margen_lat = 0.015 + (max_q * 0.015) 
-                    margen_lon = 0.020 + (max_q * 0.015)
-                    
-                    min_lat = min(f["lat"] for f in focos_aire) - margen_lat
-                    max_lat = max(f["lat"] for f in focos_aire) + margen_lat
-                    min_lon = min(f["lon"] for f in focos_aire) - margen_lon
-                    max_lon = max(f["lon"] for f in focos_aire) + margen_lon
-                    
-                    step_lat = 0.00015
-                    step_lon = 0.00020
-                    
-                    def get_color_for_conc(c):
-                        stops = [(10.0, (253, 241, 226)), (20.0, (246, 210, 185)), (40.0, (236, 174, 147)), (50.0, (220, 130, 108)), (100.0, (189, 35, 40))]
-                        if c <= 10.0: return "#FDF1E2"
-                        if c >= 100.0: return "#BD2328"
-                        for i in range(4):
-                            if stops[i][0] <= c <= stops[i+1][0]:
-                                f = (c - stops[i][0]) / (stops[i+1][0] - stops[i][0])
-                                r = int(stops[i][1][0] + f * (stops[i+1][1][0] - stops[i][1][0]))
-                                g = int(stops[i][1][1] + f * (stops[i+1][1][1] - stops[i][1][1]))
-                                b = int(stops[i][1][2] + f * (stops[i+1][1][2] - stops[i][1][2]))
-                                return f"#{r:02X}{g:02X}{b:02X}"
-                        return "#BD2328"
-                    
-                    lat_i = min_lat
-                    while lat_i <= max_lat:
-                        lon_i = min_lon
-                        while lon_i <= max_lon:
-                            c_lat = lat_i + step_lat/2
-                            c_lon = lon_i + step_lon/2
-                            
-                            conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
-                            
-                            if conc >= 10.0:
-                                conc_level = round(conc, 0)
-                                col = get_color_for_conc(conc_level)
-                                
-                                if conc >= 100.0: lbl = "> 100 µg/m³"
-                                elif conc >= 50.0: lbl = "50 - 100 µg/m³"
-                                elif conc >= 40.0: lbl = "40 - 50 µg/m³"
-                                elif conc >= 20.0: lbl = "20 - 40 µg/m³"
-                                else: lbl = "10 - 20 µg/m³"
-                                
-                                key = (col, lbl)
-                                if key not in poligonos_color: poligonos_color[key] = []
-                                
-                                polvo_grid_kmz.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
-                                
-                                p1 = (lon_i, lat_i)
-                                p2 = (lon_i + step_lon, lat_i)
-                                p3 = (lon_i + step_lon, lat_i + step_lat)
-                                p4 = (lon_i, lat_i + step_lat)
-                                poly = ShapelyPolygon([p1, p2, p3, p4])
-                                if not poly.is_valid: poly = poly.buffer(0)
-                                poligonos_color[key].append(poly)
-                                
-                            lon_i += step_lon
-                        lat_i += step_lat
-                
-                kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz, viento_u=viento_velocidad, viento_dir=viento_direccion)
-                st.download_button("⬇️ Descargar KMZ (Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
-                
-                st.write("---")
-                informe_txt = "ESTUDIO ATMOSFÉRICO: POLVO Y PARTÍCULAS PM10. FASE DE OBRA\n"
-                informe_txt += "="*65 + "\n\n"
-                informe_txt += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
-                
-                informe_txt += "1. CONDICIONES METEOROLÓGICAS DEL ESCENARIO\n"
-                informe_txt += "-"*55 + "\n"
-                informe_txt += f"Velocidad del viento (u): {viento_velocidad} m/s\n"
-                informe_txt += f"Dirección de procedencia: {viento_direccion}º\n"
-                informe_txt += f"Dirección física de arrastre de la pluma: {(viento_direccion + 180) % 360}º\n\n"
-                
-                informe_txt += "2. MARCO LEGAL Y METODOLOGÍA\n"
-                informe_txt += "-"*55 + "\n"
-                informe_txt += "Legislación aplicable: Ley 34/2007 de Calidad del Aire y Protección de la Atmósfera, y RD 102/2011.\n"
-                informe_txt += "Modelo matemático: Modelo Gaussiano de dispersión en estado estacionario (basado en formulación AUSTAL2000).\n"
-                informe_txt += "Evaluación térmica y mecánica: Los cálculos evalúan el transporte del contaminante por advección, difusión transversal y turbulencias mecánicas. Se consideran Focos de Área/Volumen para simular el bulbo difuso y dispersión posterior.\n\n"
-                
-                informe_txt += "3. INVENTARIO DE FOCOS Y MEDIDAS CORRECTORAS APLICADAS\n"
-                informe_txt += "-"*55 + "\n"
-                if focos_aire:
-                    for i, f in enumerate(focos_aire):
-                        informe_txt += f"Foco {i+1}: {f['name']}\n"
-                        informe_txt += f"  - Coordenadas: Lat {f['lat']:.5f}, Lon {f['lon']:.5f}\n"
-                        informe_txt += f"  - Actividades operativas simultáneas:\n"
-                        for a in f['actividades']: informe_txt += f"      * {a}\n"
-                        
-                        if f['medidas']:
-                            informe_txt += f"  - Medidas preventivas activas y factor de reducción:\n"
-                            for m in f['medidas']: informe_txt += f"      * {m}\n"
-                        else:
-                            informe_txt += f"  - Medidas preventivas activas: NINGUNA\n"
-                        
-                        q_base_foco, _ = calcular_emision_polvo_lista(f['actividades'], [], viento_velocidad)
-                        informe_txt += f"  - Tasa de Emisión Base bruta: {q_base_foco:.3f} g/s\n"
-                        informe_txt += f"  - Tasa de Emisión Neta (Tras aplicar eficiencia de medidas): {f['Q']:.3f} g/s\n\n"
-                else: informe_txt += " No se han modelizado focos emisores de polvo.\n\n"
-                
-                informe_txt += "4. LÍMITES NORMATIVOS Y CONCLUSIONES\n"
-                informe_txt += "-"*55 + "\n"
-                informe_txt += "La evaluación se ha realizado teniendo en cuenta los límites establecidos en el "
-                informe_txt += "Anexo I del Real Decreto 102/2011, de 28 de enero, relativo a la mejora de la calidad del aire.\n"
-                informe_txt += "Límite Diario legal para protección de la salud humana: 50 µg/m³.\n\n"
-                informe_txt += "Se recomienda visualizar la cartografía en el Visor o KMZ para verificar la no afección a receptores sensibles "
-                informe_txt += "(El límite legal de 50 µg/m³ queda representado mediante el contorno de color rojo. De superarse en zonas habitadas, deberán aplicarse medidas de mitigación adicionales o paralizarse los trabajos).\n"
-                
-                st.download_button("📄 Descargar Informe Calidad del Aire (TXT)", data=informe_txt, file_name="informe_polvo.txt", mime="text/plain", use_container_width=True)
-
-    # --- Botón de Limpiar con KEY única para arreglar el Duplicate ID ---
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True, key="btn_limpiar_mapa_unico"):
         st.session_state["mis_dibujos"] = []; st.session_state["map_version"] += 1; st.rerun()
 
-    # --- Enlaces Visores Externos ---
     st.write("---")
     st.markdown("### 🔗 Visores de Interés")
     st.markdown("""
@@ -790,7 +624,8 @@ show_osm = (modo_visor == "🔊 Vectores de Ruido")
 show_sat = (modo_visor == "💨 Calidad del Aire (Polvo PM10)")
 
 folium.TileLayer("OpenStreetMap", name="🗺️ Fondo OpenStreetMap", show=show_osm).add_to(m)
-folium.TileLayer("cartodbpositron", name="⚪ Fondo Gris Claro", show=False).add_to(m)
+# Fondo Gris Claro seguro y robusto usando Esri
+folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", attr="Esri", name="⚪ Fondo Gris Claro", show=False).add_to(m)
 folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Esri", name="🌍 Satélite (Esri)", show=show_sat).add_to(m)
 folium.TileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", attr="OpenTopoMap", name="🏔️ Topográfico", show=False).add_to(m)
 
@@ -806,11 +641,25 @@ folium.WmsTileLayer(url="https://servicios.idee.es/wms-inspire/transportes", lay
 
 fg_resultados_ruido = folium.FeatureGroup(name="🔊 Ondas de Ruido (Isófonas)", show=(modo_visor == "🔊 Vectores de Ruido")).add_to(m)
 fg_resultados_aire = folium.FeatureGroup(name="💨 Dispersión de Polvo (PM10)", show=(modo_visor == "💨 Calidad del Aire (Polvo PM10)")).add_to(m)
+fg_fondo = folium.FeatureGroup(name="🗺️ Ámbito de Obra (Fondo visual)").add_to(m)
 fg_poblaciones = folium.FeatureGroup(name="🏠 Poblaciones Evaluadas").add_to(m)
 fg_pantallas = folium.FeatureGroup(name="〰️ Pantallas Acústicas").add_to(m)
 fg_focos = folium.FeatureGroup(name="📍 Focos de Obra").add_to(m)
 
+# DIBUJO DE LA CAPA DE FONDO VISUAL
+for f_fondo in st.session_state["capas_fondo"]:
+    coords_fondo = f_fondo["geometry"]["coordinates"]
+    tipo_fondo = f_fondo["geometry"]["type"]
+    if tipo_fondo == "LineString":
+        folium.PolyLine(locations=[[lat, lon] for lon, lat in coords_fondo], color="#3388ff", weight=3, dash_array="5, 10").add_to(fg_fondo)
+    elif tipo_fondo == "Polygon":
+        folium.Polygon(locations=[[lat, lon] for lon, lat in coords_fondo[0]], color="#3388ff", fill=False, weight=3, dash_array="5, 10").add_to(fg_fondo)
+
 css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
+
+isofonas_list_export = [] # Para el KML de ruido
+polvo_grid_kmz_export = [] # Para el KML de polvo
+poligonos_color = {}
 
 if modo_visor == "🔊 Vectores de Ruido":
     if tipo_malla == "Malla Fina (Intervalos 5dB)":
@@ -829,6 +678,8 @@ if modo_visor == "🔊 Vectores de Ruido":
                 for geom in geoms:
                     coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
                     folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Ruido: {banda['min']} dB").add_to(fg_resultados_ruido)
+                    # Añadir a la exportación
+                    isofonas_list_export.append({"name": f"Ruido > {banda['min']} dB", "color": banda["color"], "coords": coords_folium})
     else:
         for umb, color, opacity, w in [(umbral_referencia - 20, "green", 0.1, 1), (umbral_referencia - 10, "orange", 0.2, 1), (umbral_referencia, "red", 0.3, 2)]:
             poligonos_banda = []
@@ -845,6 +696,7 @@ if modo_visor == "🔊 Vectores de Ruido":
                 for geom in geoms:
                     coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
                     folium.Polygon(locations=coords_folium, color=color, fill=True, fill_opacity=opacity, weight=w+1, tooltip=f"Límite: {umb} dB").add_to(fg_resultados_ruido)
+                    isofonas_list_export.append({"name": f"Límite > {umb} dB", "color": color, "coords": coords_folium})
 
     if activar_umbral_global:
         poligonos_limite = []
@@ -864,6 +716,67 @@ if modo_visor == "🔊 Vectores de Ruido":
 
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
+        max_q = max([f["Q"] for f in focos_aire] + [0.1])
+        margen_lat = 0.015 + (max_q * 0.015) 
+        margen_lon = 0.020 + (max_q * 0.015)
+        
+        min_lat = min(f["lat"] for f in focos_aire) - margen_lat
+        max_lat = max(f["lat"] for f in focos_aire) + margen_lat
+        min_lon = min(f["lon"] for f in focos_aire) - margen_lon
+        max_lon = max(f["lon"] for f in focos_aire) + margen_lon
+        
+        step_lat = 0.00015
+        step_lon = 0.00020
+        
+        def get_color_for_conc(c):
+            stops = [(10.0, (253, 241, 226)), (20.0, (246, 210, 185)), (40.0, (236, 174, 147)), (50.0, (220, 130, 108)), (100.0, (189, 35, 40))]
+            if c <= 10.0: return "#FDF1E2"
+            if c >= 100.0: return "#BD2328"
+            for i in range(4):
+                if stops[i][0] <= c <= stops[i+1][0]:
+                    f_val = (c - stops[i][0]) / (stops[i+1][0] - stops[i][0])
+                    r = int(stops[i][1][0] + f_val * (stops[i+1][1][0] - stops[i][1][0]))
+                    g = int(stops[i][1][1] + f_val * (stops[i+1][1][1] - stops[i][1][1]))
+                    b = int(stops[i][1][2] + f_val * (stops[i+1][1][2] - stops[i][1][2]))
+                    return f"#{r:02X}{g:02X}{b:02X}"
+            return "#BD2328"
+        
+        lat_i = min_lat
+        while lat_i <= max_lat:
+            lon_i = min_lon
+            while lon_i <= max_lon:
+                c_lat = lat_i + step_lat/2
+                c_lon = lon_i + step_lon/2
+                
+                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                
+                if conc >= 10.0:
+                    conc_level = round(conc, 0)
+                    col = get_color_for_conc(conc_level)
+                    
+                    if conc >= 100.0: lbl = "> 100 µg/m³"
+                    elif conc >= 50.0: lbl = "50 - 100 µg/m³"
+                    elif conc >= 40.0: lbl = "40 - 50 µg/m³"
+                    elif conc >= 20.0: lbl = "20 - 40 µg/m³"
+                    else: lbl = "10 - 20 µg/m³"
+                    
+                    key = (col, lbl)
+                    if key not in poligonos_color: poligonos_color[key] = []
+                    
+                    # Rellenar lista para KML
+                    polvo_grid_kmz_export.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
+                    
+                    p1 = (lon_i, lat_i)
+                    p2 = (lon_i + step_lon, lat_i)
+                    p3 = (lon_i + step_lon, lat_i + step_lat)
+                    p4 = (lon_i, lat_i + step_lat)
+                    poly = ShapelyPolygon([p1, p2, p3, p4])
+                    if not poly.is_valid: poly = poly.buffer(0)
+                    poligonos_color[key].append(poly)
+                    
+                lon_i += step_lon
+            lat_i += step_lat
+
         for (color, lbl), list_poly in poligonos_color.items():
             if list_poly:
                 merged = unary_union(list_poly)
@@ -871,6 +784,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 for geom in geoms:
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
                     folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
+
 
 for pob in poblaciones:
     poly_coords = pob["coords"]
@@ -1042,3 +956,141 @@ if map_output and map_output.get("last_active_drawing"):
         except: pass
         st.session_state["map_version"] += 1
         st.rerun()
+
+# ==========================================
+# EXPORTACIÓN Y REPORTES AL FINAL (PARA CAPTURAR VARIABLES CALCULADAS)
+# ==========================================
+with st.sidebar:
+    with st.expander("📥 3. Exportación y Reportes", expanded=False):
+        if st.session_state["mis_dibujos"]:
+            if modo_visor == "🔊 Vectores de Ruido":
+                kmz_data = generar_kmz(focos, pantallas_data, poblaciones, isofonas_list_export, modo="ruido")
+                st.download_button("⬇️ Descargar KMZ (Ruido y Elementos)", data=kmz_data, file_name="mapa_ruido.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
+                
+                informe_ruido = "ESTUDIO ACÚSTICO: VECTORES DE RUIDO. FASE DE OBRA\n"
+                informe_ruido += "="*65 + "\n\n"
+                informe_ruido += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                informe_ruido += "1. MARCO LEGAL Y METODOLOGÍA\n"
+                informe_ruido += "-"*55 + "\n"
+                informe_ruido += "Legislación de referencia: Ley 37/2003, del Ruido y Real Decreto 1367/2007.\n"
+                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores evaluando atenuación por divergencia geométrica y difracción/absorción por pantallas acústicas interpuestas.\n\n"
+                
+                informe_ruido += "2. INVENTARIO DE FOCOS SONOROS (MAQUINARIA)\n"
+                informe_ruido += "-"*55 + "\n"
+                if focos:
+                    for i, f in enumerate(focos):
+                        informe_ruido += f"Foco {i+1}: {f['name']}\n"
+                        informe_ruido += f"  - Emisión Acústica Total Combinada: {f['emision']:.1f} dB(A)\n"
+                        if f['maq']:
+                            informe_ruido += "  - Maquinaria operativa en este foco (Nivel de potencia sonora Lw):\n"
+                            for m_name, m_db in f['maq'].items():
+                                informe_ruido += f"      * {m_name}: {m_db} dB(A)\n"
+                        else:
+                            informe_ruido += "  - Maquinaria operativa: No especificada manualmente.\n"
+                        informe_ruido += "\n"
+                else: 
+                    informe_ruido += " No se han modelizado focos sonoros.\n\n"
+                
+                informe_ruido += "3. MEDIDAS CORRECTORAS (PANTALLAS ACÚSTICAS)\n"
+                informe_ruido += "-"*55 + "\n"
+                if pantallas_data:
+                    for p in pantallas_data: 
+                        informe_ruido += f" - Barrera '{p['name']}': Atenuación teórica configurada de {p['aten']} dB(A)\n"
+                else: 
+                    informe_ruido += " No se han dispuesto pantallas acústicas para esta simulación.\n"
+                
+                informe_ruido += "\n4. AFECCIÓN A RECEPTORES SENSIBLES (POBLACIÓN)\n"
+                informe_ruido += "-"*55 + "\n"
+                if poblaciones:
+                    for pob in poblaciones:
+                        poly_coords = pob["coords"]
+                        c_lon, c_lat = ShapelyPolygon(poly_coords).centroid.x, ShapelyPolygon(poly_coords).centroid.y
+                        max_ruido = 0
+                        puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
+                        for pt in puntos_eval:
+                            r_parciales = []
+                            for f in focos:
+                                if f["emision"] <= 0: continue
+                                dist = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                                lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
+                                at_ap = 0
+                                for p in pantallas_data:
+                                    if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
+                                ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
+                                r_parciales.append(ruido_foco)
+                            r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
+                            if r_tot > max_ruido: max_ruido = r_tot
+                            
+                        supera_umbral = False
+                        if max_ruido > pob['umbral']: supera_umbral = True
+                        else:
+                            for f in focos:
+                                if f["emision"] <= 0: continue
+                                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
+                                if len(iso_coords_limite) >= 3:
+                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
+                                    if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
+                                    if ShapelyPolygon(poly_coords).intersects(iso_poly): 
+                                        supera_umbral = True; break
+
+                        estado = "INCUMPLE (Supera límite legal)" if supera_umbral else "CUMPLE"
+                        informe_ruido += f" - Receptor Analizado: {pob['name']}\n"
+                        informe_ruido += f"   * Uso del Suelo: {pob['uso_nombre']} (Límite Legal: {pob['umbral']} dB)\n"
+                        informe_ruido += f"   * Ruido Máximo Estimado en Fachada/Límite: {max_ruido:.1f} dB(A)\n"
+                        informe_ruido += f"   * ESTADO NORMATIVO: {estado}\n\n"
+                else: 
+                    informe_ruido += " No se han modelizado núcleos receptores sensibles.\n"
+                
+                st.write("---")
+                st.download_button("📄 Descargar Informe Acústico (TXT)", data=informe_ruido, file_name="informe_ruido.txt", mime="text/plain", use_container_width=True)
+
+            elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
+                kmz_data = generar_kmz(focos_aire, pantallas_data, poblaciones, [], modo="polvo", polvo_grid=polvo_grid_kmz_export, viento_u=viento_velocidad, viento_dir=viento_direccion)
+                st.download_button("⬇️ Descargar KMZ (Pluma de Polvo)", data=kmz_data, file_name="mapa_polvo.kmz", mime="application/vnd.google-earth.kmz", use_container_width=True)
+                
+                st.write("---")
+                informe_txt = "ESTUDIO ATMOSFÉRICO: POLVO Y PARTÍCULAS PM10. FASE DE OBRA\n"
+                informe_txt += "="*65 + "\n\n"
+                informe_txt += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                
+                informe_txt += "1. CONDICIONES METEOROLÓGICAS DEL ESCENARIO\n"
+                informe_txt += "-"*55 + "\n"
+                informe_txt += f"Velocidad del viento (u): {viento_velocidad} m/s\n"
+                informe_txt += f"Dirección de procedencia: {viento_direccion}º\n"
+                informe_txt += f"Dirección física de arrastre de la pluma: {(viento_direccion + 180) % 360}º\n\n"
+                
+                informe_txt += "2. MARCO LEGAL Y METODOLOGÍA\n"
+                informe_txt += "-"*55 + "\n"
+                informe_txt += "Legislación aplicable: Ley 34/2007 de Calidad del Aire y Protección de la Atmósfera, y RD 102/2011.\n"
+                informe_txt += "Modelo matemático: Modelo Gaussiano de dispersión en estado estacionario (basado en formulación AUSTAL2000).\n"
+                informe_txt += "Evaluación térmica y mecánica: Los cálculos evalúan el transporte del contaminante por advección, difusión transversal y turbulencias mecánicas. Se consideran Focos de Área/Volumen para simular el bulbo difuso y dispersión posterior.\n\n"
+                
+                informe_txt += "3. INVENTARIO DE FOCOS Y MEDIDAS CORRECTORAS APLICADAS\n"
+                informe_txt += "-"*55 + "\n"
+                if focos_aire:
+                    for i, f in enumerate(focos_aire):
+                        informe_txt += f"Foco {i+1}: {f['name']}\n"
+                        informe_txt += f"  - Coordenadas: Lat {f['lat']:.5f}, Lon {f['lon']:.5f}\n"
+                        informe_txt += f"  - Actividades operativas simultáneas:\n"
+                        for a in f['actividades']: informe_txt += f"      * {a}\n"
+                        
+                        if f['medidas']:
+                            informe_txt += f"  - Medidas preventivas activas y factor de reducción:\n"
+                            for m in f['medidas']: informe_txt += f"      * {m}\n"
+                        else:
+                            informe_txt += f"  - Medidas preventivas activas: NINGUNA\n"
+                        
+                        q_base_foco, _ = calcular_emision_polvo_lista(f['actividades'], [], viento_velocidad)
+                        informe_txt += f"  - Tasa de Emisión Base bruta: {q_base_foco:.3f} g/s\n"
+                        informe_txt += f"  - Tasa de Emisión Neta (Tras aplicar eficiencia de medidas): {f['Q']:.3f} g/s\n\n"
+                else: informe_txt += " No se han modelizado focos emisores de polvo.\n\n"
+                
+                informe_txt += "4. LÍMITES NORMATIVOS Y CONCLUSIONES\n"
+                informe_txt += "-"*55 + "\n"
+                informe_txt += "La evaluación se ha realizado teniendo en cuenta los límites establecidos en el "
+                informe_txt += "Anexo I del Real Decreto 102/2011, de 28 de enero, relativo a la mejora de la calidad del aire.\n"
+                informe_txt += "Límite Diario legal para protección de la salud humana: 50 µg/m³.\n\n"
+                informe_txt += "Se recomienda visualizar la cartografía en el Visor o KMZ para verificar la no afección a receptores sensibles "
+                informe_txt += "(El límite legal de 50 µg/m³ queda representado mediante el contorno de color rojo. De superarse en zonas habitadas, deberán aplicarse medidas de mitigación adicionales o paralizarse los trabajos).\n"
+                
+                st.download_button("📄 Descargar Informe Calidad del Aire (TXT)", data=informe_txt, file_name="informe_polvo.txt", mime="text/plain", use_container_width=True)

@@ -7,7 +7,6 @@ import zipfile
 import io
 import json
 import re
-import xml.etree.ElementTree as ET
 import pandas as pd
 import requests
 from branca.element import Template, MacroElement
@@ -108,13 +107,35 @@ def obtener_clima_actual_api(lat, lon):
     except:
         return 3.5, 270.0 
 
+@st.cache_data(ttl=3600)
+def obtener_elevaciones(lats, lons):
+    try:
+        url = f"https://api.open-meteo.com/v1/elevation?latitude={','.join(map(str, lats))}&longitude={','.join(map(str, lons))}"
+        r = requests.get(url, timeout=5).json()
+        return r.get("elevation", [0.0]*len(lats))
+    except:
+        return [0.0]*len(lats)
+
+def generar_perfil_radial(lat, lon, radius=100):
+    lats, lons = [], []
+    for angle in range(0, 360, 45):
+        rad = math.radians(angle)
+        d_lat = math.degrees(radius * math.cos(rad) / 6378137.0)
+        d_lon = math.degrees(radius * math.sin(rad) / (6378137.0 * math.cos(math.radians(lat))))
+        lats.append(lat + d_lat)
+        lons.append(lon + d_lon)
+    return obtener_elevaciones(lats, lons)
+
 @st.cache_data
 def cargar_maquinas():
     try: return pd.read_csv("maquinaria.csv")
     except: return pd.DataFrame({"Nombre_Maquina": ["Máquina Genérica"], "dB_1m": [90.0]})
 
 df_maq = cargar_maquinas()
-lista_maquinas = df_maq['Nombre_Maquina'].tolist() + ["➕ Otra (Manual)"]
+lista_maquinas = df_maq['Nombre_Maquina'].tolist()
+if "🚜 Lote Movimiento Tierras (Excav. + Transporte)" not in lista_maquinas:
+    lista_maquinas.insert(0, "🚜 Lote Movimiento Tierras (Excav. + Transporte)")
+lista_maquinas.append("➕ Otra (Manual)")
 
 for idx, feature in enumerate(st.session_state["mis_dibujos"]):
     tipo = feature["geometry"]["type"]
@@ -124,6 +145,10 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
         feature["properties"]["name"] = f"{prefix} {idx+1}"
         
     if "cota" not in feature["properties"]: feature["properties"]["cota"] = 0.0
+    if "altura_maq" not in feature["properties"]: feature["properties"]["altura_maq"] = 2.0
+    if "h_dia" not in feature["properties"]: feature["properties"]["h_dia"] = 8.0
+    if "h_noche" not in feature["properties"]: feature["properties"]["h_noche"] = 0.0
+    if "perfil_radial" not in feature["properties"]: feature["properties"]["perfil_radial"] = [0.0]*8
     
     if tipo == "Point" and "maq" not in feature["properties"]: feature["properties"]["maq"] = {}
     if tipo == "LineString" and "aten" not in feature["properties"]: feature["properties"]["aten"] = 15.0
@@ -152,57 +177,77 @@ def distancia_haversine(lat1, lon1, lat2, lon2):
     a = math.sin(d_phi/2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(d_lam/2)**2
     return 2 * R * math.atan2(math.sqrt(a), math.sqrt(1-a))
 
+def get_bearing(lat1, lon1, lat2, lon2):
+    dLon = math.radians(lon2 - lon1)
+    lat1, lat2 = math.radians(lat1), math.radians(lat2)
+    y = math.sin(dLon) * math.cos(lat2)
+    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon)
+    return (math.degrees(math.atan2(y, x)) + 360) % 360
+
 def parsear_kml_a_dibujos(kml_texto):
     dibujos = []
     try:
-        kml_limpio = re.sub(r'\sxmlns="[^"]+"', '', kml_texto)
-        root = ET.fromstring(kml_limpio)
-        for placemark in root.iter('Placemark'):
-            name_tag = placemark.find('name')
-            nombre = name_tag.text if name_tag is not None else "Elemento Importado"
-            pt = placemark.find('.//Point')
-            if pt is not None:
-                coord_tag = pt.find('.//coordinates')
-                if coord_tag is not None:
-                    coords = coord_tag.text.strip().split()
-                    if coords:
-                        lon, lat = map(float, coords[0].split(',')[:2])
-                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": [], "cota": 0.0}})
+        kml_texto = re.sub(r' xmlns="[^"]+"', '', kml_texto)
+        placemarks = re.findall(r'<Placemark.*?>(.*?)</Placemark>', kml_texto, re.DOTALL)
+        for pm in placemarks:
+            name_match = re.search(r'<name>(.*?)</name>', pm, re.DOTALL)
+            nombre = name_match.group(1).strip() if name_match else "Elemento Importado"
+            
+            pt_match = re.search(r'<Point>.*?<coordinates>(.*?)</coordinates>', pm, re.DOTALL)
+            if pt_match:
+                coords = pt_match.group(1).strip().replace('\n', ' ').split()
+                if coords:
+                    parts = coords[0].split(',')
+                    if len(parts) >= 2:
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [float(parts[0]), float(parts[1])]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": [], "cota": 0.0, "altura_maq": 2.0, "h_dia": 8.0, "h_noche": 0.0, "perfil_radial": [0.0]*8}})
                         continue
-            ls = placemark.find('.//LineString')
-            if ls is not None:
-                coord_tag = ls.find('.//coordinates')
-                if coord_tag is not None:
-                    pares = coord_tag.text.strip().split()
-                    coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
-                    if coords_list:
-                        dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
-                        continue
-            poly = placemark.find('.//Polygon')
-            if poly is not None:
-                coord_tag = poly.find('.//coordinates')
-                if coord_tag is not None:
-                    pares = coord_tag.text.strip().split()
-                    coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
-                    if coords_list:
-                        dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0}})
-                        continue
+            
+            ls_match = re.search(r'<LineString>.*?<coordinates>(.*?)</coordinates>', pm, re.DOTALL)
+            if ls_match:
+                coords_str = ls_match.group(1).strip().replace('\n', ' ').split()
+                coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str if len(p.split(',')) >= 2]
+                if coords_list:
+                    dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
+                    continue
+            
+            poly_match = re.search(r'<Polygon>.*?<coordinates>(.*?)</coordinates>', pm, re.DOTALL)
+            if poly_match:
+                coords_str = poly_match.group(1).strip().replace('\n', ' ').split()
+                coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str if len(p.split(',')) >= 2]
+                if coords_list:
+                    dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0}})
     except Exception as e:
         st.error(f"Error parseando KML interno: {e}")
     return dibujos
 
 @st.cache_data(show_spinner=False)
-def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, pantallas_data_json, focos_all_json, r_earth=6378137.0):
+def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, pantallas_data_json, focos_all_json, f_cota=0.0, f_altura_maq=2.0, radial_foco=None, r_earth=6378137.0):
     pantallas_data = json.loads(pantallas_data_json)
     focos_all = json.loads(focos_all_json)
     coords = []
+    if radial_foco is None: radial_foco = [f_cota]*8
+    
     foco_pt = Point(foco_lon, foco_lat)
-    radio_base = calcular_radio(emision_foco, umbral_banda, 0)
-    if radio_base <= 0: return []
+    
     emision_total_all = 10 * math.log10(sum(10**(f["emision"]/10) for f in focos_all)) if focos_all else emision_foco
     r_max_posible = calcular_radio(emision_total_all, umbral_banda, 0)
+    
     for angle in range(361):
         rad = math.radians(angle)
+        
+        # Interacción topográfica de la isófona (Escaneo Radial)
+        idx1 = int(angle // 45) % 8
+        idx2 = (idx1 + 1) % 8
+        w = (angle % 45) / 45.0
+        cota_terreno_angulo = radial_foco[idx1] * (1.0 - w) + radial_foco[idx2] * w
+        
+        aten_topo_base = 6.0 if cota_terreno_angulo > (f_cota + f_altura_maq) else 0.0
+        radio_base = calcular_radio(emision_foco, umbral_banda, aten_topo_base)
+        
+        if radio_base <= 0:
+            coords.append([foco_lat, foco_lon])
+            continue
+            
         r_max_libre = radio_base
         if len(focos_all) > 1 and r_max_posible > radio_base:
             low = radio_base
@@ -214,13 +259,23 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                 ruidos_pto = []
                 for f in focos_all:
                     dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], foco_lat + d_lat, foco_lon + d_lon)
-                    dist_3d = math.sqrt(dist_2d**2 + f.get("cota", 0.0)**2)
-                    val = f["emision"] - 20 * math.log10(dist_3d) if dist_3d > 1 else f["emision"]
+                    dist_3d = math.sqrt(dist_2d**2 + f.get("altura_maq", 2.0)**2)
+                    
+                    b_angle = get_bearing(f["coords"][1], f["coords"][0], foco_lat + d_lat, foco_lon + d_lon)
+                    f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*8)
+                    idx_f1 = int(b_angle // 45) % 8
+                    idx_f2 = (idx_f1 + 1) % 8
+                    wf = (b_angle % 45) / 45.0
+                    c_terr = f_radial[idx_f1] * (1 - wf) + f_radial[idx_f2] * wf
+                    
+                    at_t = 6.0 if c_terr > (f.get("cota", 0.0) + f.get("altura_maq", 2.0)) else 0.0
+                    val = f["emision"] - 20 * math.log10(dist_3d) - at_t if dist_3d > 1 else f["emision"] - at_t
                     ruidos_pto.append(val)
                 tot = 10 * math.log10(sum(10**(x/10) for x in ruidos_pto)) if ruidos_pto else 0
                 if tot >= umbral_banda: low = mid
                 else: high = mid
             r_max_libre = low
+            
         d_lon_max = math.degrees(r_max_libre * math.cos(rad) / (r_earth * math.cos(math.radians(foco_lat))))
         d_lat_max = math.degrees(r_max_libre * math.sin(rad) / r_earth)
         punto_max = Point(foco_lon + d_lon_max, foco_lat + d_lat_max)
@@ -307,29 +362,32 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
         
-        # --- FÍSICA CORREGIDA (TERRAIN-FOLLOWING) ---
-        # El receptor respira siempre a 1.5m respecto a su propio suelo local.
+        # Física del terreno (Polvo)
         z_eff = 1.5
-        # Altura efectiva de la pluma. Si el receptor (pueblo) está más alto que el foco, 
-        # la pluma tiende a impactar el terreno, cortamos en 0.0 para que no pase "bajo tierra".
-        H_eff = max(0.0, H_base + f.get("cota", 0.0) - cota_dest)
+        
+        # Interacción topográfica en la pluma de polvo (la pluma asciende o impacta)
+        b_angle = get_bearing(f["lat"], f["lon"], lat_dest, lon_dest)
+        f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*8)
+        idx1 = int(b_angle // 45) % 8
+        idx2 = (idx1 + 1) % 8
+        w = (b_angle % 45) / 45.0
+        cota_terreno_medio = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
+        
+        # Efecto barrera cortaviento natural si el terreno sube más que la pluma
+        if cota_terreno_medio > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
+            continue # La pluma colisiona y no viaja más allá
+            
+        H_eff = max(0.0, H_base + f.get("cota", 0.0) + f.get("altura_maq", 2.0) - cota_dest)
         
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
         disp_horiz = math.exp(-(dy**2) / (2 * sigma_y**2))
-        
-        # El término de reflexión y rebote contra el suelo ahora calcula 
-        # perfectamente el impacto topográfico relativo.
         disp_vert = math.exp(-((z_eff - H_eff)**2) / (2 * sigma_z**2)) + math.exp(-((z_eff + H_eff)**2) / (2 * sigma_z**2))
         
         concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
     return concentracion
 
 def hex_to_kml_color(hex_color, alpha="80"):
-    # En KML el color es AABBGGRR
-    colores_basicos = {
-        "green": "008000", "orange": "FFA500", "red": "FF0000", 
-        "black": "000000", "blue": "0000FF", "white": "FFFFFF"
-    }
+    colores_basicos = {"green": "008000", "orange": "FFA500", "red": "FF0000", "black": "000000", "blue": "0000FF", "white": "FFFFFF"}
     hex_clean = colores_basicos.get(hex_color.lower(), hex_color.replace("#", ""))
     if len(hex_clean) == 6:
         r, g, b = hex_clean[0:2], hex_clean[2:4], hex_clean[4:6]
@@ -410,6 +468,17 @@ with st.sidebar:
 
     modo_visor = st.radio("TIPO DE ANÁLISIS AMBIENTAL:", ["🔊 Vectores de Ruido", "💨 Calidad del Aire (Polvo PM10)"], index=0)
     st.write("---")
+    
+    # --- NUEVO INTERRUPTOR DE ESCENARIOS MAX/MEDIOS ---
+    st.markdown("**📊 CONFIGURACIÓN DE ESCENARIO**")
+    escenario_visualizacion = st.radio("MODO DE VISUALIZACIÓN / NORMATIVA:", ["🔴 Impacto Máximo (Pico instantáneo)", "🔵 Normativo Medio (Ld/Ln / 24h)"], index=0)
+    periodo_normativo = "Día"
+    if escenario_visualizacion == "🔵 Normativo Medio (Ld/Ln / 24h)":
+        if modo_visor == "🔊 Vectores de Ruido":
+            periodo_normativo = st.radio("Periodo a evaluar:", ["☀️ Día / Tarde (Ld/Le) - Referencia 12h", "🌙 Noche (Ln) - Referencia 8h"])
+        else:
+            st.caption("Se evaluará la media diaria (24h) aplicable al RD 102/2011.")
+    st.write("---")
 
     with st.expander("💾 Gestión de Proyectos", expanded=False):
         if st.session_state["mis_dibujos"]:
@@ -436,11 +505,30 @@ with st.sidebar:
                             kml_internos = [f for f in zf.namelist() if f.lower().endswith('.kml')]
                             if kml_internos: kml_texto = zf.read(kml_internos[0]).decode('utf-8', errors='ignore')
                     except zipfile.BadZipFile: kml_texto = file_bytes.decode('utf-8', errors='ignore')
+                    
                     if kml_texto:
                         dibujos_kml = parsear_kml_a_dibujos(kml_texto)
                         if dibujos_kml:
-                            st.success(f"Detectados {len(dibujos_kml)} elementos.")
+                            st.success(f"Detectados {len(dibujos_kml)} elementos. Consultando topografía...")
                             if st.button("Aplicar Archivo Cargado", use_container_width=True):
+                                # Autoconsulta de cotas al importar KML
+                                lats, lons = [], []
+                                for d in dibujos_kml:
+                                    c = d["geometry"]["coordinates"]
+                                    if d["geometry"]["type"] == "Point": lats.append(c[1]); lons.append(c[0])
+                                    elif d["geometry"]["type"] == "Polygon": lats.append(c[0][0][1]); lons.append(c[0][0][0])
+                                
+                                elevs = obtener_elevaciones(lats, lons) if lats else []
+                                elev_idx = 0
+                                for d in dibujos_kml:
+                                    if d["geometry"]["type"] in ["Point", "Polygon"]:
+                                        elev = elevs[elev_idx] if elev_idx < len(elevs) and elevs[elev_idx] is not None else 0.0
+                                        d["properties"]["cota"] = elev
+                                        if d["geometry"]["type"] == "Point":
+                                            c = d["geometry"]["coordinates"]
+                                            d["properties"]["perfil_radial"] = generar_perfil_radial(c[1], c[0], 100)
+                                        elev_idx += 1
+                                        
                                 st.session_state["mis_dibujos"] = dibujos_kml
                                 if dibujos_kml[0]["geometry"]["coordinates"]:
                                     c = dibujos_kml[0]["geometry"]["coordinates"]
@@ -452,18 +540,15 @@ with st.sidebar:
                     else: st.error("Archivo vacío.")
                 except Exception as e: st.error(f"Error: {e}")
 
-    # NUEVO: Capas de fondo (Ámbito de obra)
+    # Capas de fondo (Ámbito de obra)
     with st.expander("🗺️ Capa de Fondo (Ámbito de Obra)", expanded=False):
         st.caption("Sube un KML/KMZ puramente visual para ubicar la obra (no se computa como foco o pantalla).")
-        
-        # --- NUEVOS CONTROLES DE ESTILO ---
         st.markdown("**🎨 Estilo de la Capa de Fondo**")
         col_color, col_grosor = st.columns(2)
         color_fondo = col_color.color_picker("Color", "#3388ff")
         grosor_fondo = col_grosor.slider("Grosor", 1, 10, 3)
         relleno_fondo = st.checkbox("🔲 Aplicar relleno (solo polígonos)", value=False)
         st.write("---")
-        # ----------------------------------
         
         archivo_fondo = st.file_uploader("📂 Importar Ámbito (.kmz, .kml)", type=["kmz", "kml"], key="fondo_uploader")
         if archivo_fondo is not None:
@@ -543,8 +628,18 @@ with st.sidebar:
                         st.session_state["map_version"] += 1
                         st.rerun()
                 props["name"] = st.text_input(f"Nombre {icono}", value=props["name"], key=f"name_{idx}")
+                
+                # --- NUEVO BLOQUE DE COTAS Y TIEMPOS ---
                 if tipo in ["Point", "Polygon"]:
-                    props["cota"] = st.number_input("Cota topográfica (m):", value=float(props.get("cota", 0.0)), step=1.0, key=f"cota_{idx}")
+                    c1_topo, c2_topo = st.columns(2)
+                    props["cota"] = c1_topo.number_input("Cota topográfica (m):", value=float(props.get("cota", 0.0)), step=1.0, key=f"cota_{idx}")
+                    if tipo == "Point":
+                        props["altura_maq"] = c2_topo.number_input("Alt. Foco (m):", value=float(props.get("altura_maq", 2.0)), step=0.5, key=f"alm_{idx}")
+                        st.markdown("**⏱️ Horas de Trabajo (Para escenario Medio)**")
+                        ch1, ch2 = st.columns(2)
+                        props["h_dia"] = ch1.slider("Día/Tarde (07-23h):", 0.0, 16.0, float(props.get("h_dia", 8.0)), 0.5, key=f"hd_{idx}")
+                        props["h_noche"] = ch2.slider("Noche (23-07h):", 0.0, 8.0, float(props.get("h_noche", 0.0)), 0.5, key=f"hn_{idx}")
+                # ----------------------------------------
                 
                 if tipo == "Point":
                     if modo_visor == "🔊 Vectores de Ruido":
@@ -558,13 +653,17 @@ with st.sidebar:
                         if maquina_sel == "➕ Otra (Manual)":
                             m_nom = c1.text_input("Nombre:", key=f"m_nom_{idx}")
                             m_db = c2.number_input("dB (1m):", value=90.0, step=1.0, key=f"m_db_{idx}")
+                        elif maquina_sel == "🚜 Lote Movimiento Tierras (Excav. + Transporte)":
+                            m_nom = maquina_sel
+                            m_db = c2.number_input("dB (1m):", value=110.0, step=1.0, key=f"m_db_{idx}")
                         else:
                             m_nom = maquina_sel
                             db_defecto = float(df_maq[df_maq['Nombre_Maquina'] == maquina_sel]['dB_1m'].values[0])
                             m_db = c2.number_input("dB (1m):", value=db_defecto, step=1.0, key=f"m_db_{idx}")
+                            
                         if st.button("➕ Asignar", key=f"btn_assign_{idx}") and m_nom:
                             props["maq"][m_nom] = m_db; st.rerun()
-                        st.write(f"Potencia Foco: **{sumar_decibelios(props['maq']):.1f} dB**")
+                        st.write(f"Potencia Lmax (Máx): **{sumar_decibelios(props['maq']):.1f} dB**")
                     else:
                         act_actuales = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
                         if isinstance(act_actuales, str): act_actuales = [act_actuales]
@@ -582,7 +681,7 @@ with st.sidebar:
                         if q_base > 0 and len(sel_medidas) > 0:
                             reduccion = (1 - (q_calc / q_base)) * 100
                             st.success(f"📉 Medidas aplicadas: Emisión reducida en un **{reduccion:.1f}%**")
-                        st.caption(f"Emisión Resultante Q: **{q_calc:.3f} g/s** (H_eff={h_calc}m)")
+                        st.caption(f"Emisión Qmax Resultante: **{q_calc:.3f} g/s** (H_eff base={h_calc}m)")
 
                 elif tipo == "LineString":
                     if modo_visor == "🔊 Vectores de Ruido":
@@ -602,19 +701,38 @@ with st.sidebar:
                         st.caption("Límite Diario PM10 (RD 102/2011): **50 µg/m³** (Límite normativo de protección a la salud).")
                 st.write("---")
 
-    # Extraer variables para el mapa y exportaciones
+    # Extraer variables y aplicar ESCENARIO MEDIO O MÁXIMO
     focos, pantallas_data, poblaciones, focos_aire = [], [], [], []
     for feature in st.session_state["mis_dibujos"]:
         tipo = feature["geometry"]["type"]
         coords = feature["geometry"]["coordinates"]
         props = feature["properties"]
         if tipo == "Point":
-            focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"]), "maq": props.get("maq", {}), "cota": props.get("cota", 0.0)})
+            f_cota = props.get("cota", 0.0)
+            f_altura = props.get("altura_maq", 2.0)
+            radial = props.get("perfil_radial", [f_cota]*8)
+            h_d = props.get("h_dia", 8.0)
+            h_n = props.get("h_noche", 0.0)
+            
+            emision_max = sumar_decibelios(props.get("maq", {}))
+            emision_act = emision_max
+            if escenario_visualizacion == "🔵 Normativo Medio (Ld/Ln / 24h)":
+                if "Día" in periodo_normativo: emision_act = (emision_max + 10*math.log10(h_d/12.0)) if h_d > 0 else 0
+                else: emision_act = (emision_max + 10*math.log10(h_n/8.0)) if h_n > 0 else 0
+            
+            focos.append({"coords": coords, "name": props["name"], "emision": emision_act, "maq": props.get("maq", {}), "cota": f_cota, "altura_maq": f_altura, "perfil_radial": radial})
+            
             act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
             med_list = props.get("medidas_polvo", [])
             if isinstance(act_list, str): act_list = [act_list]
-            q_v, h_v = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
-            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v, "medidas": med_list, "actividades": act_list, "cota": props.get("cota", 0.0)})
+            
+            q_max, h_max = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
+            q_act = q_max
+            if escenario_visualizacion == "🔵 Normativo Medio (Ld/Ln / 24h)":
+                q_act = q_max * ((h_d + h_n) / 24.0)
+                
+            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_act, "H": h_max, "medidas": med_list, "actividades": act_list, "cota": f_cota, "altura_maq": f_altura, "perfil_radial": radial})
+            
         elif tipo == "LineString":
             pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
         elif tipo == "Polygon":
@@ -690,7 +808,7 @@ if modo_visor == "🔊 Vectores de Ruido":
             poligonos_banda = []
             for f in focos:
                 if f["emision"] > banda["min"]:
-                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], banda["min"], pantallas_json, focos_json)
+                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], banda["min"], pantallas_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                     if len(coords) >= 3:
                         poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
                         if not poly.is_valid: poly = poly.buffer(0)
@@ -707,7 +825,7 @@ if modo_visor == "🔊 Vectores de Ruido":
             poligonos_banda = []
             for f in focos:
                 if f["emision"] > umb:
-                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umb, pantallas_json, focos_json)
+                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umb, pantallas_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                     if len(coords) >= 3:
                         poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
                         if not poly.is_valid: poly = poly.buffer(0)
@@ -724,7 +842,7 @@ if modo_visor == "🔊 Vectores de Ruido":
         poligonos_limite = []
         for f in focos:
             if f["emision"] > umbral_referencia:
-                coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_referencia, pantallas_json, focos_json)
+                coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_referencia, pantallas_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                 if len(coords) >= 3:
                     poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
                     if not poly.is_valid: poly = poly.buffer(0)
@@ -763,9 +881,6 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     return f"#{r:02X}{g:02X}{b:02X}"
             return "#BD2328"
         
-        # --- Cota media para el mapa visual ultra-rápido ---
-        # Para que el renderizado de la malla visual no pierda velocidad, 
-        # asume que el terreno bajo la pluma está a la cota media de los focos.
         cota_media_focos = sum([f.get("cota", 0.0) for f in focos_aire]) / len(focos_aire) if focos_aire else 0.0
         
         lat_i = min_lat
@@ -775,7 +890,6 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                # Renderiza la malla pasando la cota media de los focos
                 conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=cota_media_focos)
                 
                 if conc >= 10.0:
@@ -812,7 +926,6 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
                     folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0, tooltip=f"Polvo: {lbl}").add_to(fg_resultados_aire)
 
-
 for pob in poblaciones:
     poly_coords = pob["coords"]
     nombre = pob["name"]
@@ -828,10 +941,19 @@ for pob in poblaciones:
             for f in focos:
                 if f["emision"] <= 0: continue
                 dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
-                dist_3d = math.sqrt(dist_2d**2 + (f.get("cota", 0.0) - pob.get("cota", 0.0))**2)
+                dist_3d = math.sqrt(dist_2d**2 + ((f.get("cota",0.0) + f.get("altura_maq",2.0)) - pob.get("cota", 0.0))**2)
+                
+                # Barrera natural topográfica
+                b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*8)
+                idx1 = int(b_angle // 45) % 8
+                idx2 = (idx1 + 1) % 8
+                w = (b_angle % 45) / 45.0
+                cota_terr = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
+                
+                at_ap = 6.0 if cota_terr > (f.get("cota", 0.0) + f.get("altura_maq", 2.0)) else 0.0
                 
                 lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
-                at_ap = 0
                 for p in pantallas_data:
                     if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
                     
@@ -846,7 +968,7 @@ for pob in poblaciones:
         else:
             for f in focos:
                 if f["emision"] <= 0: continue
-                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json)
+                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                 if len(iso_coords_limite) >= 3:
                     iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
@@ -859,9 +981,8 @@ for pob in poblaciones:
             html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Incumple {umbral_pob}dB)</span></div>'
         else: 
             color_pob = "green"
-            html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">(Cumple. Max: {max_ruido:.1f} dB)</span></div>'
+            html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">(Cumple. Eval: {max_ruido:.1f} dB)</span></div>'
     else:
-        # AQUI la matemática evalúa la cota exacta real de la población
         polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=pob.get("cota", 0.0))
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102/2011: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
@@ -883,18 +1004,23 @@ for idx, f in enumerate(st.session_state["mis_dibujos"]):
         coords = f["geometry"]["coordinates"]
         props = f["properties"]
         if modo_visor == "🔊 Vectores de Ruido":
-            potencia_db = sumar_decibelios(props.get("maq", {}))
-            folium.Marker([coords[1], coords[0]], icon=folium.Icon(color="black", icon="cog"), tooltip=f"Foco: {props['name']} | {potencia_db:.1f} dB").add_to(fg_focos)
-            folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({potencia_db:.1f} dB)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
-        else:
-            act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
-            med_list = props.get("medidas_polvo", [])
-            if isinstance(act_list, str): act_list = [act_list]
-            q_a, _ = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
+            # Usar la emisión actual extraída (calculada arriba si es Max o Medio)
+            em_lbl = "Pico Lmax" if escenario_visualizacion == "🔴 Impacto Máximo (Pico instantáneo)" else "Medio Normativo"
+            # Recuperar de nuestra lista "focos" para asegurar el valor correcto calculado
+            foco_res = next((item for item in focos if item["coords"] == coords), None)
+            val_emision = foco_res["emision"] if foco_res else 0.0
             
+            folium.Marker([coords[1], coords[0]], icon=folium.Icon(color="black", icon="cog"), tooltip=f"Foco: {props['name']} | {val_emision:.1f} dB").add_to(fg_focos)
+            folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({em_lbl}: {val_emision:.1f} dB)</div>', icon_size=(250, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
+        else:
+            foco_res = next((item for item in focos_aire if item["lat"] == coords[1] and item["lon"] == coords[0]), None)
+            val_emision = foco_res["Q"] if foco_res else 0.0
+            em_lbl = "Q Máx" if escenario_visualizacion == "🔴 Impacto Máximo (Pico instantáneo)" else "Media 24h"
+            
+            med_list = props.get("medidas_polvo", [])
             icono_color = "blue" if med_list else "lightgray"
-            folium.Marker([coords[1], coords[0]], icon=folium.Icon(color=icono_color, icon="info-sign"), tooltip=f"Foco: {props['name']} | Q: {q_a:.3f} g/s").add_to(fg_focos)
-            folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({q_a:.3f} g/s)</div>', icon_size=(200, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
+            folium.Marker([coords[1], coords[0]], icon=folium.Icon(color=icono_color, icon="info-sign"), tooltip=f"Foco: {props['name']} | Q: {val_emision:.3f} g/s").add_to(fg_focos)
+            folium.Marker([coords[1], coords[0]], icon=folium.DivIcon(html=f'<div style="{css_texto}">{props["name"]}<br>({em_lbl}: {val_emision:.3f} g/s)</div>', icon_size=(250, 40), icon_anchor=(-15, 20))).add_to(fg_focos)
 
 Draw(export=False, draw_options={'polyline': True, 'polygon': True, 'marker': True, 'circle': False, 'rectangle': False}, edit_options={'edit': False, 'remove': False}).add_to(m)
 folium.LayerControl(position="topright", collapsed=True).add_to(m)
@@ -977,14 +1103,31 @@ if map_output and map_output.get("last_active_drawing"):
     ya_existe = any(json.dumps(d.get("geometry"), sort_keys=True, default=safe_serialize) == geom_nueva_str for d in st.session_state["mis_dibujos"])
     
     if not ya_existe:
-        st.session_state["mis_dibujos"].append(nuevo_dibujo)
         coords = nuevo_dibujo["geometry"]["coordinates"]
         tipo = nuevo_dibujo["geometry"]["type"]
+        
+        nuevo_dibujo["properties"]["cota"] = 0.0
+        nuevo_dibujo["properties"]["altura_maq"] = 2.0
+        nuevo_dibujo["properties"]["h_dia"] = 8.0
+        nuevo_dibujo["properties"]["h_noche"] = 0.0
+        nuevo_dibujo["properties"]["perfil_radial"] = [0.0]*8
+        
         try:
-            if tipo == "Point": st.session_state["map_center"] = [coords[1], coords[0]]
-            elif tipo == "LineString" and coords: st.session_state["map_center"] = [coords[0][1], coords[0][0]]
-            elif tipo == "Polygon" and coords and coords[0]: st.session_state["map_center"] = [coords[0][0][1], coords[0][0][0]]
-        except: pass
+            if tipo == "Point":
+                elev = obtener_elevaciones([coords[1]], [coords[0]])[0]
+                nuevo_dibujo["properties"]["cota"] = elev
+                nuevo_dibujo["properties"]["perfil_radial"] = generar_perfil_radial(coords[1], coords[0], 100)
+                st.session_state["map_center"] = [coords[1], coords[0]]
+            elif tipo == "Polygon" and coords and coords[0]:
+                elev = obtener_elevaciones([coords[0][0][1]], [coords[0][0][0]])[0]
+                nuevo_dibujo["properties"]["cota"] = elev
+                st.session_state["map_center"] = [coords[0][0][1], coords[0][0][0]]
+            elif tipo == "LineString" and coords:
+                st.session_state["map_center"] = [coords[0][1], coords[0][0]]
+        except Exception:
+            pass
+            
+        st.session_state["mis_dibujos"].append(nuevo_dibujo)
         st.session_state["map_version"] += 1
         st.rerun()
 
@@ -1000,20 +1143,21 @@ with st.sidebar:
                 
                 informe_ruido = "ESTUDIO ACÚSTICO: VECTORES DE RUIDO. FASE DE OBRA\n"
                 informe_ruido += "="*65 + "\n\n"
-                informe_ruido += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                informe_ruido += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                informe_ruido += f"ESCENARIO EVALUADO: {escenario_visualizacion}\n\n"
                 informe_ruido += "1. MARCO LEGAL Y METODOLOGÍA\n"
                 informe_ruido += "-"*55 + "\n"
                 informe_ruido += "Legislación de referencia: Ley 37/2003, del Ruido y Real Decreto 1367/2007.\n"
-                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores evaluando atenuación por divergencia geométrica y difracción/absorción por pantallas acústicas interpuestas.\n\n"
+                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores evaluando atenuación por divergencia geométrica, y topografía/difracción por barreras y cerros interpuestos.\n\n"
                 
                 informe_ruido += "2. INVENTARIO DE FOCOS SONOROS (MAQUINARIA)\n"
                 informe_ruido += "-"*55 + "\n"
                 if focos:
                     for i, f in enumerate(focos):
-                        informe_ruido += f"Foco {i+1}: {f['name']}\n"
-                        informe_ruido += f"  - Emisión Acústica Total Combinada: {f['emision']:.1f} dB(A)\n"
+                        informe_ruido += f"Foco {i+1}: {f['name']} (Cota: {f['cota']}m + Altura emisión: {f['altura_maq']}m)\n"
+                        informe_ruido += f"  - Emisión Acústica ({'Media' if 'Normativo' in escenario_visualizacion else 'Pico'}): {f['emision']:.1f} dB(A)\n"
                         if f['maq']:
-                            informe_ruido += "  - Maquinaria operativa en este foco (Nivel de potencia sonora Lw):\n"
+                            informe_ruido += "  - Maquinaria operativa en este foco (Nivel de potencia sonora Lw base):\n"
                             for m_name, m_db in f['maq'].items():
                                 informe_ruido += f"      * {m_name}: {m_db} dB(A)\n"
                         else:
@@ -1043,12 +1187,21 @@ with st.sidebar:
                             for f in focos:
                                 if f["emision"] <= 0: continue
                                 dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
-                                dist_3d = math.sqrt(dist_2d**2 + (f.get("cota", 0.0) - pob.get("cota", 0.0))**2)
+                                dist_3d = math.sqrt(dist_2d**2 + ((f.get("cota",0.0) + f.get("altura_maq",2.0)) - pob.get("cota", 0.0))**2)
+                                
+                                b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                                f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*8)
+                                idx1 = int(b_angle // 45) % 8
+                                idx2 = (idx1 + 1) % 8
+                                w = (b_angle % 45) / 45.0
+                                cota_terr = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
+                                
+                                at_ap = 6.0 if cota_terr > (f.get("cota", 0.0) + f.get("altura_maq", 2.0)) else 0.0
                                 
                                 lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
-                                at_ap = 0
                                 for p in pantallas_data:
                                     if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
+                                    
                                 ruido_foco = f["emision"] - 20 * math.log10(dist_3d) - at_ap if dist_3d > 1 else f["emision"] - at_ap
                                 r_parciales.append(ruido_foco)
                             r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
@@ -1059,7 +1212,7 @@ with st.sidebar:
                         else:
                             for f in focos:
                                 if f["emision"] <= 0: continue
-                                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json)
+                                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                                 if len(iso_coords_limite) >= 3:
                                     iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
@@ -1069,7 +1222,7 @@ with st.sidebar:
                         estado = "INCUMPLE (Supera límite legal)" if supera_umbral else "CUMPLE"
                         informe_ruido += f" - Receptor Analizado: {pob['name']}\n"
                         informe_ruido += f"   * Uso del Suelo: {pob['uso_nombre']} (Límite Legal: {pob['umbral']} dB)\n"
-                        informe_ruido += f"   * Ruido Máximo Estimado en Fachada/Límite: {max_ruido:.1f} dB(A)\n"
+                        informe_ruido += f"   * Ruido Estimado en Fachada/Límite: {max_ruido:.1f} dB(A)\n"
                         informe_ruido += f"   * ESTADO NORMATIVO: {estado}\n\n"
                 else: 
                     informe_ruido += " No se han modelizado núcleos receptores sensibles.\n"
@@ -1084,7 +1237,8 @@ with st.sidebar:
                 st.write("---")
                 informe_txt = "ESTUDIO ATMOSFÉRICO: POLVO Y PARTÍCULAS PM10. FASE DE OBRA\n"
                 informe_txt += "="*65 + "\n\n"
-                informe_txt += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n\n"
+                informe_txt += f"FECHA DE SIMULACIÓN: {datetime.now().strftime('%d/%m/%Y %H:%M')}\n"
+                informe_txt += f"ESCENARIO EVALUADO: {escenario_visualizacion}\n\n"
                 
                 informe_txt += "1. CONDICIONES METEOROLÓGICAS DEL ESCENARIO\n"
                 informe_txt += "-"*55 + "\n"
@@ -1096,13 +1250,13 @@ with st.sidebar:
                 informe_txt += "-"*55 + "\n"
                 informe_txt += "Legislación aplicable: Ley 34/2007 de Calidad del Aire y Protección de la Atmósfera, y RD 102/2011.\n"
                 informe_txt += "Modelo matemático: Modelo Gaussiano de dispersión en estado estacionario (basado en formulación AUSTAL2000).\n"
-                informe_txt += "Evaluación térmica y mecánica: Los cálculos evalúan el transporte del contaminante por advección, difusión transversal y turbulencias mecánicas. Se consideran Focos de Área/Volumen para simular el bulbo difuso y dispersión posterior.\n\n"
+                informe_txt += "Evaluación térmica y mecánica: Los cálculos evalúan el transporte del contaminante por advección, difusión transversal y turbulencias mecánicas. Se consideran Focos de Área/Volumen para simular el bulbo difuso, dispersión posterior e interacciones orográficas.\n\n"
                 
                 informe_txt += "3. INVENTARIO DE FOCOS Y MEDIDAS CORRECTORAS APLICADAS\n"
                 informe_txt += "-"*55 + "\n"
                 if focos_aire:
                     for i, f in enumerate(focos_aire):
-                        informe_txt += f"Foco {i+1}: {f['name']}\n"
+                        informe_txt += f"Foco {i+1}: {f['name']} (Cota terreno: {f['cota']}m + Altura: {f['altura_maq']}m)\n"
                         informe_txt += f"  - Coordenadas: Lat {f['lat']:.5f}, Lon {f['lon']:.5f}\n"
                         informe_txt += f"  - Actividades operativas simultáneas:\n"
                         for a in f['actividades']: informe_txt += f"      * {a}\n"
@@ -1115,7 +1269,7 @@ with st.sidebar:
                         
                         q_base_foco, _ = calcular_emision_polvo_lista(f['actividades'], [], viento_velocidad)
                         informe_txt += f"  - Tasa de Emisión Base bruta: {q_base_foco:.3f} g/s\n"
-                        informe_txt += f"  - Tasa de Emisión Neta (Tras aplicar eficiencia de medidas): {f['Q']:.3f} g/s\n\n"
+                        informe_txt += f"  - Tasa de Emisión Neta Final Aplicada ({'Media' if 'Normativo' in escenario_visualizacion else 'Pico'}): {f['Q']:.3f} g/s\n\n"
                 else: informe_txt += " No se han modelizado focos emisores de polvo.\n\n"
                 
                 informe_txt += "4. LÍMITES NORMATIVOS Y CONCLUSIONES\n"

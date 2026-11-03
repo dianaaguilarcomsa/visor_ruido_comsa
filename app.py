@@ -194,16 +194,25 @@ def get_bearing(lat1, lon1, lat2, lon2):
 def parsear_kml_a_dibujos(kml_texto):
     dibujos = []
     try:
-        placemarks = re.findall(r'<Placemark.*?>.*?</Placemark>', kml_texto, re.DOTALL | re.IGNORECASE)
-        for pm in placemarks:
-            nombre = "Elemento KML"
-            name_match = re.search(r'<name>(.*?)</name>', pm, re.DOTALL | re.IGNORECASE)
-            if name_match: nombre = name_match.group(1).strip()
+        # Destructor de namespaces XML agresivo
+        kml_clean = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', kml_texto)
+        kml_clean = re.sub(r'<(\w+):(\w+)', r'<\2', kml_clean)
+        kml_clean = re.sub(r'</(\w+):(\w+)', r'</\2', kml_clean)
+        
+        try:
+            root = ET.fromstring(kml_clean)
+        except ET.ParseError:
+            return []
             
-            # Chinchetas blindadas (acepta saltos de línea y atributos extra)
-            pt_match = re.search(r'<Point.*?>.*?<coordinates>\s*([^<]+)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
-            if pt_match:
-                coords_str = pt_match.group(1).strip().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        for pm in root.findall('.//Placemark'):
+            nombre = "Elemento KML"
+            name_node = pm.find('name')
+            if name_node is not None and name_node.text: nombre = name_node.text.strip()
+            
+            # Chinchetas (Blindaje 100%)
+            pt_node = pm.find('.//Point//coordinates')
+            if pt_node is not None and pt_node.text:
+                coords_str = pt_node.text.strip().replace('\n', ' ').replace('\t', ' ')
                 parts = [p.strip() for p in coords_str.split(',') if p.strip()]
                 if len(parts) >= 2:
                     dibujos.append({
@@ -212,22 +221,24 @@ def parsear_kml_a_dibujos(kml_texto):
                     })
                     continue
                     
-            ls_match = re.search(r'<LineString.*?>.*?<coordinates>\s*([^<]+)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
-            if ls_match:
-                coords_str = ls_match.group(1).strip().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+            # Líneas
+            ls_node = pm.find('.//LineString//coordinates')
+            if ls_node is not None and ls_node.text:
+                coords_str = ls_node.text.strip().replace('\n', ' ').replace('\t', ' ')
                 coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str.split() if len(p.split(',')) >= 2]
                 if coords_list:
                     dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                     continue
                     
-            poly_match = re.search(r'<Polygon.*?>.*?<coordinates>\s*([^<]+)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
-            if poly_match:
-                coords_str = poly_match.group(1).strip().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+            # Polígonos
+            poly_node = pm.find('.//Polygon//coordinates')
+            if poly_node is not None and poly_node.text:
+                coords_str = poly_node.text.strip().replace('\n', ' ').replace('\t', ' ')
                 coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str.split() if len(p.split(',')) >= 2]
                 if coords_list:
                     dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0, "tipo_poligono": "🏠 Población / Receptor", "altura_edif": 10.0}})
-    except Exception as e: 
-        st.error(f"Error parseando KML interno: {e}")
+                    
+    except Exception as e: st.error(f"Error parseando KML interno: {e}")
     return dibujos
 
 @st.cache_data(show_spinner=False)
@@ -251,6 +262,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         w = (angle % 5) / 5.0
         cota_terreno_angulo = radial_foco[idx1] * (1.0 - w) + radial_foco[idx2] * w
         
+        # Atenuación topográfica
         dif_topo = cota_terreno_angulo - (f_cota + f_altura_maq)
         aten_topo_base = min(12.0, dif_topo * 1.5) if dif_topo > 0 else 0.0
         radio_base = calcular_radio(emision_foco, umbral_banda, aten_topo_base)
@@ -297,6 +309,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         rayo = LineString([foco_pt, punto_max])
         radio_final = r_max_libre
         
+        # Obstáculos Físicos
         for p in pantallas_data:
             pantalla_line = LineString(p["coords"])
             if rayo.intersects(pantalla_line):
@@ -320,14 +333,14 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                     except: pt_int = edif_poly.centroid
                     
                     d_edif = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
-                    radio_aten = r_max_libre * (10 ** (-15.0 / 20))
+                    radio_aten = r_max_libre * (10 ** (-15.0 / 20)) # Sombra edificio dura
                     if radio_aten <= d_edif: radio_final = min(radio_final, d_edif)
                     else: radio_final = min(radio_final, d_edif + (radio_aten - d_edif))
 
         radios_brutos.append(radio_final)
         
-    # --- FILTRO DE DIFRACCIÓN ACÚSTICA (Suavizado de penumbras y cortes rectangulares) ---
-    ventana = 15 # grados de ventana móvil circular
+    # --- FILTRO DE DIFRACCIÓN ACÚSTICA (Media móvil de 15 grados) ---
+    ventana = 15 
     coords = []
     for i in range(360):
         suma_radios = 0.0
@@ -373,7 +386,7 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=0.0):
+def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
     concentracion = 0.0
     for f in focos_aire:
         Q, H_base = f["Q"], f["H"]
@@ -407,8 +420,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
         
-        z_eff = 1.5
-        
+        # --- TOPOGRAFÍA EN EL POLVO (Deformación de la mancha) ---
         b_angle = get_bearing(f["lat"], f["lon"], lat_dest, lon_dest)
         f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*72)
         if len(f_radial) != 72: f_radial = [f.get("cota",0.0)]*72
@@ -416,11 +428,12 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         idx1 = int(b_angle // 5) % 72
         idx2 = (idx1 + 1) % 72
         w = (b_angle % 5) / 5.0
-        cota_terreno_medio = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
+        cota_terreno_relativa_al_rayo = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
         
-        if cota_terreno_medio > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
-            continue
-            
+        # Asignamos al terreno la altura exacta del perfil
+        cota_dest = cota_terreno_relativa_al_rayo
+        
+        z_eff = 1.5 
         H_eff = max(0.0, H_base + f.get("cota", 0.0) + f.get("altura_maq", 2.0) - cota_dest)
         
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
@@ -710,7 +723,7 @@ with st.sidebar:
                             
                         if st.button("➕ Asignar", key=f"btn_assign_{idx}") and m_nom:
                             props["maq"][m_nom] = m_db; st.rerun()
-                        st.write(f"Potencia (Máx absoluto): **{sumar_decibelios(props['maq']):.1f} dB**")
+                        st.write(f"Potencia Lmax: **{sumar_decibelios(props['maq']):.1f} dB**")
                     else:
                         act_actuales = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
                         if isinstance(act_actuales, str): act_actuales = [act_actuales]
@@ -937,8 +950,6 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     return f"#{r:02X}{g:02X}{b:02X}"
             return "#BD2328"
         
-        cota_media_focos = sum([f.get("cota", 0.0) for f in focos_aire]) / len(focos_aire) if focos_aire else 0.0
-        
         lat_i = min_lat
         while lat_i <= max_lat:
             lon_i = min_lon
@@ -946,7 +957,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=cota_media_focos)
+                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
                 
                 if conc >= 10.0:
                     conc_level = round(conc, 0)
@@ -1004,7 +1015,6 @@ for pob in poblaciones:
                 
                 b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
                 f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*72)
-                if len(f_radial) != 72: f_radial = [f.get("cota",0.0)]*72
                 idx1 = int(b_angle // 5) % 72
                 idx2 = (idx1 + 1) % 72
                 w = (b_angle % 5) / 5.0
@@ -1047,7 +1057,7 @@ for pob in poblaciones:
             color_pob = "green"
             html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({max_ruido:.1f} dB)</span></div>'
     else:
-        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=pob.get("cota", 0.0))
+        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         

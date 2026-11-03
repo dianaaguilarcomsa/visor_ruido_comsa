@@ -194,7 +194,6 @@ def get_bearing(lat1, lon1, lat2, lon2):
 def parsear_kml_a_dibujos(kml_texto):
     dibujos = []
     try:
-        # Destructor de namespaces XML agresivo
         kml_clean = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', kml_texto)
         kml_clean = re.sub(r'<(\w+):(\w+)', r'<\2', kml_clean)
         kml_clean = re.sub(r'</(\w+):(\w+)', r'</\2', kml_clean)
@@ -209,7 +208,7 @@ def parsear_kml_a_dibujos(kml_texto):
             name_node = pm.find('name')
             if name_node is not None and name_node.text: nombre = name_node.text.strip()
             
-            # Chinchetas (Blindaje 100%)
+            # Chinchetas
             pt_node = pm.find('.//Point//coordinates')
             if pt_node is not None and pt_node.text:
                 coords_str = pt_node.text.strip().replace('\n', ' ').replace('\t', ' ')
@@ -262,9 +261,9 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         w = (angle % 5) / 5.0
         cota_terreno_angulo = radial_foco[idx1] * (1.0 - w) + radial_foco[idx2] * w
         
-        # Atenuación topográfica
+        # Atenuación topográfica natural (Suavizada para evitar tajos)
         dif_topo = cota_terreno_angulo - (f_cota + f_altura_maq)
-        aten_topo_base = min(12.0, dif_topo * 1.5) if dif_topo > 0 else 0.0
+        aten_topo_base = min(6.0, dif_topo * 0.4) if dif_topo > 0 else 0.0
         radio_base = calcular_radio(emision_foco, umbral_banda, aten_topo_base)
         
         if radio_base <= 0:
@@ -294,7 +293,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                     c_terr = f_radial[idx_f1] * (1 - wf) + f_radial[idx_f2] * wf
                     
                     d_top = c_terr - (f.get("cota", 0.0) + f.get("altura_maq", 2.0))
-                    at_t = min(12.0, d_top * 1.5) if d_top > 0 else 0.0
+                    at_t = min(6.0, d_top * 0.4) if d_top > 0 else 0.0
                     
                     val = f["emision"] - 20 * math.log10(dist_3d) - at_t if dist_3d > 1 else f["emision"] - at_t
                     ruidos_pto.append(val)
@@ -309,7 +308,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         rayo = LineString([foco_pt, punto_max])
         radio_final = r_max_libre
         
-        # Obstáculos Físicos
+        # Obstáculos Físicos de Hormigón (Estos sí cortan el sonido en seco)
         for p in pantallas_data:
             pantalla_line = LineString(p["coords"])
             if rayo.intersects(pantalla_line):
@@ -333,14 +332,14 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                     except: pt_int = edif_poly.centroid
                     
                     d_edif = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
-                    radio_aten = r_max_libre * (10 ** (-15.0 / 20)) # Sombra edificio dura
+                    radio_aten = r_max_libre * (10 ** (-15.0 / 20)) 
                     if radio_aten <= d_edif: radio_final = min(radio_final, d_edif)
                     else: radio_final = min(radio_final, d_edif + (radio_aten - d_edif))
 
         radios_brutos.append(radio_final)
         
-    # --- FILTRO DE DIFRACCIÓN ACÚSTICA (Media móvil de 15 grados) ---
-    ventana = 15 
+    # --- FILTRO DE DIFRACCIÓN ACÚSTICA ORGÁNICA (Media móvil ampliada a 30 grados) ---
+    ventana = 30 
     coords = []
     for i in range(360):
         suma_radios = 0.0
@@ -386,7 +385,7 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
+def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=0.0):
     concentracion = 0.0
     for f in focos_aire:
         Q, H_base = f["Q"], f["H"]
@@ -420,7 +419,8 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
         
-        # --- TOPOGRAFÍA EN EL POLVO (Deformación de la mancha) ---
+        z_eff = 1.5
+        
         b_angle = get_bearing(f["lat"], f["lon"], lat_dest, lon_dest)
         f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*72)
         if len(f_radial) != 72: f_radial = [f.get("cota",0.0)]*72
@@ -428,12 +428,11 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         idx1 = int(b_angle // 5) % 72
         idx2 = (idx1 + 1) % 72
         w = (b_angle % 5) / 5.0
-        cota_terreno_relativa_al_rayo = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
+        cota_terreno_medio = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
         
-        # Asignamos al terreno la altura exacta del perfil
-        cota_dest = cota_terreno_relativa_al_rayo
-        
-        z_eff = 1.5 
+        if cota_terreno_medio > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
+            continue
+            
         H_eff = max(0.0, H_base + f.get("cota", 0.0) + f.get("altura_maq", 2.0) - cota_dest)
         
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
@@ -1015,13 +1014,14 @@ for pob in poblaciones:
                 
                 b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
                 f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*72)
+                if len(f_radial) != 72: f_radial = [f.get("cota",0.0)]*72
                 idx1 = int(b_angle // 5) % 72
                 idx2 = (idx1 + 1) % 72
                 w = (b_angle % 5) / 5.0
                 cota_terr = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
                 
                 d_top = cota_terr - (f.get("cota", 0.0) + f.get("altura_maq", 2.0))
-                at_ap = min(12.0, d_top * 1.5) if d_top > 0 else 0.0
+                at_ap = min(6.0, d_top * 0.4) if d_top > 0 else 0.0
                 
                 lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
                 for p in pantallas_data:
@@ -1057,7 +1057,7 @@ for pob in poblaciones:
             color_pob = "green"
             html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({max_ruido:.1f} dB)</span></div>'
     else:
-        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=pob.get("cota", 0.0))
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         
@@ -1269,7 +1269,7 @@ with st.sidebar:
                                 cota_terr = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
                                 
                                 d_top = cota_terr - (f.get("cota", 0.0) + f.get("altura_maq", 2.0))
-                                at_ap = min(12.0, d_top * 1.5) if d_top > 0 else 0.0
+                                at_ap = min(6.0, d_top * 0.4) if d_top > 0 else 0.0
                                 
                                 lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
                                 for p in pantallas_data:

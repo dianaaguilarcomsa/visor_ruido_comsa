@@ -119,7 +119,7 @@ def obtener_elevaciones(lats, lons):
 
 def generar_perfil_radial(lat, lon, radius=100):
     lats, lons = [], []
-    for angle in range(0, 360, 5): # 72 puntos de muestreo hiper-suaves
+    for angle in range(0, 360, 5): 
         rad = math.radians(angle)
         d_lat = math.degrees(radius * math.cos(rad) / 6378137.0)
         d_lon = math.degrees(radius * math.sin(rad) / (6378137.0 * math.cos(math.radians(lat))))
@@ -157,7 +157,6 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
     if tipo == "Point" and "maq" not in feature["properties"]: feature["properties"]["maq"] = {}
     if tipo == "LineString" and "aten" not in feature["properties"]: feature["properties"]["aten"] = 15.0
     
-    # Nuevas propiedades para Polígonos (Poblaciones vs Edificios)
     if tipo == "Polygon":
         if "tipo_poligono" not in feature["properties"]: feature["properties"]["tipo_poligono"] = "🏠 Población / Receptor"
         if "umbral" not in feature["properties"]: feature["properties"]["umbral"] = 65.0
@@ -195,25 +194,16 @@ def get_bearing(lat1, lon1, lat2, lon2):
 def parsear_kml_a_dibujos(kml_texto):
     dibujos = []
     try:
-        # Lector Robusto: Limpia namespaces y basura de Google Earth
-        kml_clean = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', kml_texto)
-        kml_clean = re.sub(r'<(\w+):(\w+)', r'<\2', kml_clean)
-        kml_clean = re.sub(r'</(\w+):(\w+)', r'</\2', kml_clean)
-        
-        try:
-            root = ET.fromstring(kml_clean)
-        except ET.ParseError:
-            return []
-            
-        for pm in root.findall('.//Placemark'):
+        placemarks = re.findall(r'<Placemark.*?>.*?</Placemark>', kml_texto, re.DOTALL | re.IGNORECASE)
+        for pm in placemarks:
             nombre = "Elemento KML"
-            name_node = pm.find('name')
-            if name_node is not None and name_node.text: nombre = name_node.text.strip()
+            name_match = re.search(r'<name>(.*?)</name>', pm, re.DOTALL | re.IGNORECASE)
+            if name_match: nombre = name_match.group(1).strip()
             
-            # Punto / Chincheta
-            pt_node = pm.find('.//Point//coordinates')
-            if pt_node is not None and pt_node.text:
-                coords_str = pt_node.text.strip().replace('\n', ' ').replace('\t', ' ')
+            # Chinchetas blindadas (acepta saltos de línea y atributos extra)
+            pt_match = re.search(r'<Point.*?>.*?<coordinates>\s*([^<]+)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
+            if pt_match:
+                coords_str = pt_match.group(1).strip().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
                 parts = [p.strip() for p in coords_str.split(',') if p.strip()]
                 if len(parts) >= 2:
                     dibujos.append({
@@ -222,24 +212,22 @@ def parsear_kml_a_dibujos(kml_texto):
                     })
                     continue
                     
-            # Línea
-            ls_node = pm.find('.//LineString//coordinates')
-            if ls_node is not None and ls_node.text:
-                coords_str = ls_node.text.strip().replace('\n', ' ').replace('\t', ' ')
+            ls_match = re.search(r'<LineString.*?>.*?<coordinates>\s*([^<]+)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
+            if ls_match:
+                coords_str = ls_match.group(1).strip().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
                 coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str.split() if len(p.split(',')) >= 2]
                 if coords_list:
                     dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                     continue
                     
-            # Polígono
-            poly_node = pm.find('.//Polygon//coordinates')
-            if poly_node is not None and poly_node.text:
-                coords_str = poly_node.text.strip().replace('\n', ' ').replace('\t', ' ')
+            poly_match = re.search(r'<Polygon.*?>.*?<coordinates>\s*([^<]+)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
+            if poly_match:
+                coords_str = poly_match.group(1).strip().replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
                 coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str.split() if len(p.split(',')) >= 2]
                 if coords_list:
                     dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0, "tipo_poligono": "🏠 Población / Receptor", "altura_edif": 10.0}})
-                    
-    except Exception as e: st.error(f"Error parseando KML interno: {e}")
+    except Exception as e: 
+        st.error(f"Error parseando KML interno: {e}")
     return dibujos
 
 @st.cache_data(show_spinner=False)
@@ -247,30 +235,28 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
     pantallas_data = json.loads(pantallas_data_json)
     edificios_data = json.loads(edificios_data_json)
     focos_all = json.loads(focos_all_json)
-    coords = []
     if radial_foco is None or len(radial_foco) != 72: radial_foco = [f_cota]*72
     
     foco_pt = Point(foco_lon, foco_lat)
-    
     emision_total_all = 10 * math.log10(sum(10**(f["emision"]/10) for f in focos_all)) if focos_all else emision_foco
     r_max_posible = calcular_radio(emision_total_all, umbral_banda, 0)
     
-    for angle in range(361):
+    radios_brutos = []
+    
+    for angle in range(360):
         rad = math.radians(angle)
         
-        # Interacción topográfica suave (72 puntos = cada 5 grados)
         idx1 = int(angle // 5) % 72
         idx2 = (idx1 + 1) % 72
         w = (angle % 5) / 5.0
         cota_terreno_angulo = radial_foco[idx1] * (1.0 - w) + radial_foco[idx2] * w
         
-        # Transición difractiva suave (max 12 dB si tapa la loma)
         dif_topo = cota_terreno_angulo - (f_cota + f_altura_maq)
         aten_topo_base = min(12.0, dif_topo * 1.5) if dif_topo > 0 else 0.0
         radio_base = calcular_radio(emision_foco, umbral_banda, aten_topo_base)
         
         if radio_base <= 0:
-            coords.append([foco_lat, foco_lon])
+            radios_brutos.append(0.0)
             continue
             
         r_max_libre = radio_base
@@ -311,7 +297,6 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         rayo = LineString([foco_pt, punto_max])
         radio_final = r_max_libre
         
-        # 1. Sombras por Muros/Pantallas
         for p in pantallas_data:
             pantalla_line = LineString(p["coords"])
             if rayo.intersects(pantalla_line):
@@ -322,11 +307,9 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                 if radio_aten <= d_muro: radio_final = min(radio_final, d_muro)
                 else: radio_final = min(radio_final, d_muro + (radio_aten - d_muro))
                 
-        # 2. Sombras por Edificios (NUEVO)
         for edif in edificios_data:
             edif_poly = ShapelyPolygon(edif["coords"])
             if rayo.intersects(edif_poly):
-                # Si el edificio supera la línea visual del foco (hace de pantalla)
                 if (edif["cota"] + edif["altura"]) > (f_cota + f_altura_maq):
                     try:
                         interseccion = rayo.intersection(edif_poly)
@@ -337,13 +320,28 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                     except: pt_int = edif_poly.centroid
                     
                     d_edif = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
-                    radio_aten = r_max_libre * (10 ** (-15.0 / 20)) # Sombra dura edificio (-15dB)
+                    radio_aten = r_max_libre * (10 ** (-15.0 / 20))
                     if radio_aten <= d_edif: radio_final = min(radio_final, d_edif)
                     else: radio_final = min(radio_final, d_edif + (radio_aten - d_edif))
 
-        d_lon_final = math.degrees(radio_final * math.cos(rad) / (r_earth * math.cos(math.radians(foco_lat))))
-        d_lat_final = math.degrees(radio_final * math.sin(rad) / r_earth)
+        radios_brutos.append(radio_final)
+        
+    # --- FILTRO DE DIFRACCIÓN ACÚSTICA (Suavizado de penumbras y cortes rectangulares) ---
+    ventana = 15 # grados de ventana móvil circular
+    coords = []
+    for i in range(360):
+        suma_radios = 0.0
+        for j in range(i - ventana//2, i + ventana//2 + 1):
+            suma_radios += radios_brutos[j % 360]
+        r_suave = suma_radios / ventana
+        
+        if r_suave <= 0: r_suave = 0.1
+        rad = math.radians(i)
+        d_lon_final = math.degrees(r_suave * math.cos(rad) / (r_earth * math.cos(math.radians(foco_lat))))
+        d_lat_final = math.degrees(r_suave * math.sin(rad) / r_earth)
         coords.append([foco_lat + d_lat_final, foco_lon + d_lon_final])
+        
+    if coords: coords.append(coords[0])
     return coords
 
 def calcular_emision_polvo_lista(actividades, medidas, u_viento):
@@ -556,22 +554,25 @@ with st.sidebar:
                         if dibujos_kml:
                             st.success(f"Detectados {len(dibujos_kml)} elementos. Consultando topografía...")
                             if st.button("Aplicar Archivo Cargado", use_container_width=True):
-                                lats, lons = [], []
-                                for d in dibujos_kml:
-                                    c = d["geometry"]["coordinates"]
-                                    if d["geometry"]["type"] == "Point": lats.append(c[1]); lons.append(c[0])
-                                    elif d["geometry"]["type"] == "Polygon": lats.append(c[0][0][1]); lons.append(c[0][0][0])
-                                
-                                elevs = obtener_elevaciones(lats, lons) if lats else []
-                                elev_idx = 0
-                                for d in dibujos_kml:
-                                    if d["geometry"]["type"] in ["Point", "Polygon"]:
-                                        elev = elevs[elev_idx] if elev_idx < len(elevs) and elevs[elev_idx] is not None else 0.0
-                                        d["properties"]["cota"] = elev
-                                        if d["geometry"]["type"] == "Point":
-                                            c = d["geometry"]["coordinates"]
-                                            d["properties"]["perfil_radial"] = generar_perfil_radial(c[1], c[0], 100)
-                                        elev_idx += 1
+                                try:
+                                    lats, lons = [], []
+                                    for d in dibujos_kml:
+                                        c = d["geometry"]["coordinates"]
+                                        if d["geometry"]["type"] == "Point": lats.append(c[1]); lons.append(c[0])
+                                        elif d["geometry"]["type"] == "Polygon": lats.append(c[0][0][1]); lons.append(c[0][0][0])
+                                    
+                                    elevs = obtener_elevaciones(lats, lons) if lats else []
+                                    elev_idx = 0
+                                    for d in dibujos_kml:
+                                        if d["geometry"]["type"] in ["Point", "Polygon"]:
+                                            elev = elevs[elev_idx] if elev_idx < len(elevs) and elevs[elev_idx] is not None else 0.0
+                                            d["properties"]["cota"] = elev
+                                            if d["geometry"]["type"] == "Point":
+                                                c = d["geometry"]["coordinates"]
+                                                d["properties"]["perfil_radial"] = generar_perfil_radial(c[1], c[0], 100)
+                                            elev_idx += 1
+                                except:
+                                    st.warning("No se pudo obtener la altitud automática. Se usarán cotas relativas (0m).")
                                         
                                 st.session_state["mis_dibujos"] = dibujos_kml
                                 if dibujos_kml[0]["geometry"]["coordinates"]:
@@ -580,7 +581,7 @@ with st.sidebar:
                                     else: st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
                                 st.session_state["map_version"] += 1
                                 st.rerun()
-                        else: st.warning("No se encontraron geometrías válidas.")
+                        else: st.warning("No se encontraron geometrías válidas. Revisa el formato de KML de Google Earth.")
                     else: st.error("Archivo vacío.")
                 except Exception as e: st.error(f"Error: {e}")
 
@@ -1004,13 +1005,11 @@ for pob in poblaciones:
                 b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
                 f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*72)
                 if len(f_radial) != 72: f_radial = [f.get("cota",0.0)]*72
-                
                 idx1 = int(b_angle // 5) % 72
                 idx2 = (idx1 + 1) % 72
                 w = (b_angle % 5) / 5.0
                 cota_terr = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
                 
-                # Atenuación topográfica suave (max 12 dB)
                 d_top = cota_terr - (f.get("cota", 0.0) + f.get("altura_maq", 2.0))
                 at_ap = min(12.0, d_top * 1.5) if d_top > 0 else 0.0
                 
@@ -1018,7 +1017,6 @@ for pob in poblaciones:
                 for p in pantallas_data:
                     if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
                     
-                # Comprobación adicional de edificios dibujados a mano
                 for edif in edificios_data:
                     if lv.intersects(ShapelyPolygon(edif["coords"])):
                         if (edif["cota"] + edif["altura"]) > (f.get("cota",0.0) + f.get("altura_maq",2.0)):

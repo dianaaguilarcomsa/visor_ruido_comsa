@@ -122,6 +122,8 @@ for idx, feature in enumerate(st.session_state["mis_dibujos"]):
     if "name" not in feature["properties"]:
         prefix = "Foco" if tipo == "Point" else "Pantalla" if tipo == "LineString" else "Población"
         feature["properties"]["name"] = f"{prefix} {idx+1}"
+        
+    if "cota" not in feature["properties"]: feature["properties"]["cota"] = 0.0
     
     if tipo == "Point" and "maq" not in feature["properties"]: feature["properties"]["maq"] = {}
     if tipo == "LineString" and "aten" not in feature["properties"]: feature["properties"]["aten"] = 15.0
@@ -165,7 +167,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     coords = coord_tag.text.strip().split()
                     if coords:
                         lon, lat = map(float, coords[0].split(',')[:2])
-                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": []}})
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [lon, lat]}, "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": [], "cota": 0.0}})
                         continue
             ls = placemark.find('.//LineString')
             if ls is not None:
@@ -183,7 +185,7 @@ def parsear_kml_a_dibujos(kml_texto):
                     pares = coord_tag.text.strip().split()
                     coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
                     if coords_list:
-                        dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial"}})
+                        dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0}})
                         continue
     except Exception as e:
         st.error(f"Error parseando KML interno: {e}")
@@ -211,8 +213,9 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                 d_lat = math.degrees(mid * math.sin(rad) / r_earth)
                 ruidos_pto = []
                 for f in focos_all:
-                    dist = distancia_haversine(f["coords"][1], f["coords"][0], foco_lat + d_lat, foco_lon + d_lon)
-                    val = f["emision"] - 20 * math.log10(dist) if dist > 1 else f["emision"]
+                    dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], foco_lat + d_lat, foco_lon + d_lon)
+                    dist_3d = math.sqrt(dist_2d**2 + f.get("cota", 0.0)**2)
+                    val = f["emision"] - 20 * math.log10(dist_3d) if dist_3d > 1 else f["emision"]
                     ruidos_pto.append(val)
                 tot = 10 * math.log10(sum(10**(x/10) for x in ruidos_pto)) if ruidos_pto else 0
                 if tot >= umbral_banda: low = mid
@@ -270,10 +273,10 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde):
+def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=0.0):
     concentracion = 0.0
     for f in focos_aire:
-        Q, H = f["Q"], f["H"]
+        Q, H_base = f["Q"], f["H"]
         if Q <= 0: continue
         
         dist = distancia_haversine(f["lat"], f["lon"], lat_dest, lon_dest)
@@ -304,11 +307,19 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
         
-        z = 1.5 
+        # --- FÍSICA CORREGIDA (TERRAIN-FOLLOWING) ---
+        # El receptor respira siempre a 1.5m respecto a su propio suelo local.
+        z_eff = 1.5
+        # Altura efectiva de la pluma. Si el receptor (pueblo) está más alto que el foco, 
+        # la pluma tiende a impactar el terreno, cortamos en 0.0 para que no pase "bajo tierra".
+        H_eff = max(0.0, H_base + f.get("cota", 0.0) - cota_dest)
         
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
         disp_horiz = math.exp(-(dy**2) / (2 * sigma_y**2))
-        disp_vert = math.exp(-((z - H)**2) / (2 * sigma_z**2)) + math.exp(-((z + H)**2) / (2 * sigma_z**2))
+        
+        # El término de reflexión y rebote contra el suelo ahora calcula 
+        # perfectamente el impacto topográfico relativo.
+        disp_vert = math.exp(-((z_eff - H_eff)**2) / (2 * sigma_z**2)) + math.exp(-((z_eff + H_eff)**2) / (2 * sigma_z**2))
         
         concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
     return concentracion
@@ -444,6 +455,16 @@ with st.sidebar:
     # NUEVO: Capas de fondo (Ámbito de obra)
     with st.expander("🗺️ Capa de Fondo (Ámbito de Obra)", expanded=False):
         st.caption("Sube un KML/KMZ puramente visual para ubicar la obra (no se computa como foco o pantalla).")
+        
+        # --- NUEVOS CONTROLES DE ESTILO ---
+        st.markdown("**🎨 Estilo de la Capa de Fondo**")
+        col_color, col_grosor = st.columns(2)
+        color_fondo = col_color.color_picker("Color", "#3388ff")
+        grosor_fondo = col_grosor.slider("Grosor", 1, 10, 3)
+        relleno_fondo = st.checkbox("🔲 Aplicar relleno (solo polígonos)", value=False)
+        st.write("---")
+        # ----------------------------------
+        
         archivo_fondo = st.file_uploader("📂 Importar Ámbito (.kmz, .kml)", type=["kmz", "kml"], key="fondo_uploader")
         if archivo_fondo is not None:
             try:
@@ -522,6 +543,8 @@ with st.sidebar:
                         st.session_state["map_version"] += 1
                         st.rerun()
                 props["name"] = st.text_input(f"Nombre {icono}", value=props["name"], key=f"name_{idx}")
+                if tipo in ["Point", "Polygon"]:
+                    props["cota"] = st.number_input("Cota topográfica (m):", value=float(props.get("cota", 0.0)), step=1.0, key=f"cota_{idx}")
                 
                 if tipo == "Point":
                     if modo_visor == "🔊 Vectores de Ruido":
@@ -586,16 +609,16 @@ with st.sidebar:
         coords = feature["geometry"]["coordinates"]
         props = feature["properties"]
         if tipo == "Point":
-            focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"]), "maq": props.get("maq", {})})
+            focos.append({"coords": coords, "name": props["name"], "emision": sumar_decibelios(props["maq"]), "maq": props.get("maq", {}), "cota": props.get("cota", 0.0)})
             act_list = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
             med_list = props.get("medidas_polvo", [])
             if isinstance(act_list, str): act_list = [act_list]
             q_v, h_v = calcular_emision_polvo_lista(act_list, med_list, viento_velocidad if 'viento_velocidad' in locals() else 3.5)
-            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v, "medidas": med_list, "actividades": act_list})
+            focos_aire.append({"lat": coords[1], "lon": coords[0], "name": props["name"], "Q": q_v, "H": h_v, "medidas": med_list, "actividades": act_list, "cota": props.get("cota", 0.0)})
         elif tipo == "LineString":
             pantallas_data.append({"coords": coords, "name": props["name"], "aten": props["aten"]})
         elif tipo == "Polygon":
-            poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial")})
+            poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial"), "cota": props.get("cota", 0.0)})
 
     pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
     focos_json = json.dumps(focos, default=safe_serialize)
@@ -651,14 +674,14 @@ for f_fondo in st.session_state["capas_fondo"]:
     coords_fondo = f_fondo["geometry"]["coordinates"]
     tipo_fondo = f_fondo["geometry"]["type"]
     if tipo_fondo == "LineString":
-        folium.PolyLine(locations=[[lat, lon] for lon, lat in coords_fondo], color="#3388ff", weight=3, dash_array="5, 10").add_to(fg_fondo)
+        folium.PolyLine(locations=[[lat, lon] for lon, lat in coords_fondo], color=color_fondo, weight=grosor_fondo).add_to(fg_fondo)
     elif tipo_fondo == "Polygon":
-        folium.Polygon(locations=[[lat, lon] for lon, lat in coords_fondo[0]], color="#3388ff", fill=False, weight=3, dash_array="5, 10").add_to(fg_fondo)
+        folium.Polygon(locations=[[lat, lon] for lon, lat in coords_fondo[0]], color=color_fondo, fill=relleno_fondo, fill_color=color_fondo, fill_opacity=0.3, weight=grosor_fondo).add_to(fg_fondo)
 
 css_texto = 'color: white; text-shadow: -1.5px -1.5px 0 #000, 1.5px -1.5px 0 #000, -1.5px 1.5px 0 #000, 1.5px 1.5px 0 #000; font-weight: bold; font-size: 14px; white-space: nowrap;'
 
-isofonas_list_export = [] # Para el KML de ruido
-polvo_grid_kmz_export = [] # Para el KML de polvo
+isofonas_list_export = []
+polvo_grid_kmz_export = []
 poligonos_color = {}
 
 if modo_visor == "🔊 Vectores de Ruido":
@@ -678,7 +701,6 @@ if modo_visor == "🔊 Vectores de Ruido":
                 for geom in geoms:
                     coords_folium = [(lat, lon) for lon, lat in geom.exterior.coords]
                     folium.Polygon(locations=coords_folium, color=banda["color"], fill=True, fill_color=banda["color"], fill_opacity=opacidad_malla_fina, weight=1, tooltip=f"Ruido: {banda['min']} dB").add_to(fg_resultados_ruido)
-                    # Añadir a la exportación
                     isofonas_list_export.append({"name": f"Ruido > {banda['min']} dB", "color": banda["color"], "coords": coords_folium})
     else:
         for umb, color, opacity, w in [(umbral_referencia - 20, "green", 0.1, 1), (umbral_referencia - 10, "orange", 0.2, 1), (umbral_referencia, "red", 0.3, 2)]:
@@ -741,6 +763,11 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     return f"#{r:02X}{g:02X}{b:02X}"
             return "#BD2328"
         
+        # --- Cota media para el mapa visual ultra-rápido ---
+        # Para que el renderizado de la malla visual no pierda velocidad, 
+        # asume que el terreno bajo la pluma está a la cota media de los focos.
+        cota_media_focos = sum([f.get("cota", 0.0) for f in focos_aire]) / len(focos_aire) if focos_aire else 0.0
+        
         lat_i = min_lat
         while lat_i <= max_lat:
             lon_i = min_lon
@@ -748,7 +775,8 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                # Renderiza la malla pasando la cota media de los focos
+                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=cota_media_focos)
                 
                 if conc >= 10.0:
                     conc_level = round(conc, 0)
@@ -763,7 +791,6 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     key = (col, lbl)
                     if key not in poligonos_color: poligonos_color[key] = []
                     
-                    # Rellenar lista para KML
                     polvo_grid_kmz_export.append({"bounds": [[lat_i, lon_i], [lat_i + step_lat, lon_i + step_lon]], "color": col, "conc": conc})
                     
                     p1 = (lon_i, lat_i)
@@ -800,12 +827,15 @@ for pob in poblaciones:
             r_parciales = []
             for f in focos:
                 if f["emision"] <= 0: continue
-                dist = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                dist_3d = math.sqrt(dist_2d**2 + (f.get("cota", 0.0) - pob.get("cota", 0.0))**2)
+                
                 lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
                 at_ap = 0
                 for p in pantallas_data:
                     if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
-                ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
+                    
+                ruido_foco = f["emision"] - 20 * math.log10(dist_3d) - at_ap if dist_3d > 1 else f["emision"] - at_ap
                 r_parciales.append(ruido_foco)
             r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
             if r_tot > max_ruido: max_ruido = r_tot
@@ -831,7 +861,8 @@ for pob in poblaciones:
             color_pob = "green"
             html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">(Cumple. Max: {max_ruido:.1f} dB)</span></div>'
     else:
-        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+        # AQUI la matemática evalúa la cota exacta real de la población
+        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=pob.get("cota", 0.0))
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102/2011: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         
@@ -1011,12 +1042,14 @@ with st.sidebar:
                             r_parciales = []
                             for f in focos:
                                 if f["emision"] <= 0: continue
-                                dist = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                                dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                                dist_3d = math.sqrt(dist_2d**2 + (f.get("cota", 0.0) - pob.get("cota", 0.0))**2)
+                                
                                 lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
                                 at_ap = 0
                                 for p in pantallas_data:
                                     if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
-                                ruido_foco = f["emision"] - 20 * math.log10(dist) - at_ap if dist > 1 else f["emision"] - at_ap
+                                ruido_foco = f["emision"] - 20 * math.log10(dist_3d) - at_ap if dist_3d > 1 else f["emision"] - at_ap
                                 r_parciales.append(ruido_foco)
                             r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
                             if r_tot > max_ruido: max_ruido = r_tot

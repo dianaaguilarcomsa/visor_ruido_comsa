@@ -208,7 +208,6 @@ def parsear_kml_a_dibujos(kml_texto):
             name_node = pm.find('name')
             if name_node is not None and name_node.text: nombre = name_node.text.strip()
             
-            # Chinchetas
             pt_node = pm.find('.//Point//coordinates')
             if pt_node is not None and pt_node.text:
                 coords_str = pt_node.text.strip().replace('\n', ' ').replace('\t', ' ')
@@ -220,7 +219,6 @@ def parsear_kml_a_dibujos(kml_texto):
                     })
                     continue
                     
-            # Líneas
             ls_node = pm.find('.//LineString//coordinates')
             if ls_node is not None and ls_node.text:
                 coords_str = ls_node.text.strip().replace('\n', ' ').replace('\t', ' ')
@@ -229,7 +227,6 @@ def parsear_kml_a_dibujos(kml_texto):
                     dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
                     continue
                     
-            # Polígonos
             poly_node = pm.find('.//Polygon//coordinates')
             if poly_node is not None and poly_node.text:
                 coords_str = poly_node.text.strip().replace('\n', ' ').replace('\t', ' ')
@@ -261,9 +258,9 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         w = (angle % 5) / 5.0
         cota_terreno_angulo = radial_foco[idx1] * (1.0 - w) + radial_foco[idx2] * w
         
-        # Atenuación topográfica natural (Suavizada para evitar tajos)
+        # Atenuación topográfica natural (Suavizada, MAX 10 dB)
         dif_topo = cota_terreno_angulo - (f_cota + f_altura_maq)
-        aten_topo_base = min(6.0, dif_topo * 0.4) if dif_topo > 0 else 0.0
+        aten_topo_base = min(10.0, dif_topo * 0.75) if dif_topo > 0 else 0.0
         radio_base = calcular_radio(emision_foco, umbral_banda, aten_topo_base)
         
         if radio_base <= 0:
@@ -293,7 +290,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
                     c_terr = f_radial[idx_f1] * (1 - wf) + f_radial[idx_f2] * wf
                     
                     d_top = c_terr - (f.get("cota", 0.0) + f.get("altura_maq", 2.0))
-                    at_t = min(6.0, d_top * 0.4) if d_top > 0 else 0.0
+                    at_t = min(10.0, d_top * 0.75) if d_top > 0 else 0.0
                     
                     val = f["emision"] - 20 * math.log10(dist_3d) - at_t if dist_3d > 1 else f["emision"] - at_t
                     ruidos_pto.append(val)
@@ -308,7 +305,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         rayo = LineString([foco_pt, punto_max])
         radio_final = r_max_libre
         
-        # Obstáculos Físicos de Hormigón (Estos sí cortan el sonido en seco)
+        # Obstáculos Físicos de Hormigón (Sombras duras y marcadas)
         for p in pantallas_data:
             pantalla_line = LineString(p["coords"])
             if rayo.intersects(pantalla_line):
@@ -338,8 +335,10 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
 
         radios_brutos.append(radio_final)
         
-    # --- FILTRO DE DIFRACCIÓN ACÚSTICA ORGÁNICA (Media móvil ampliada a 30 grados) ---
-    ventana = 30 
+    # --- FILTRO DE DIFRACCIÓN ACÚSTICA (Ventana fina = 7 grados) ---
+    # Esto elimina los "bocados rectangulares" suavizando solo los vértices de las sombras,
+    # manteniendo la forma estructural de los obstáculos sin convertirlo todo en un círculo.
+    ventana = 7 
     coords = []
     for i in range(360):
         suma_radios = 0.0
@@ -385,8 +384,11 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=0.0):
+def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, pantallas_data=None, edificios_data=None, cota_dest=0.0):
+    if pantallas_data is None: pantallas_data = []
+    if edificios_data is None: edificios_data = []
     concentracion = 0.0
+    
     for f in focos_aire:
         Q, H_base = f["Q"], f["H"]
         if Q <= 0: continue
@@ -418,9 +420,20 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_y = sigma_y0 + 0.25 * abs(dx) 
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 60.0**2)) 
+            
+        # --- OBSTÁCULOS EN LA PLUMA DE POLVO (Ray-Casting aerodinámico) ---
+        rayo_polvo = LineString([(f["lon"], f["lat"]), (lon_dest, lat_dest)])
+        for p in pantallas_data:
+            if rayo_polvo.intersects(LineString(p["coords"])):
+                decay_x *= 0.6  # -40% de polvo por bloqueo de barrera
+                
+        for edif in edificios_data:
+            if rayo_polvo.intersects(ShapelyPolygon(edif["coords"])):
+                if (edif["cota"] + edif["altura"]) > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
+                    decay_x *= 0.25 # -75% de polvo al quedar en sombra/estela aerodinámica
         
+        # --- TOPOGRAFÍA DE LA PLUMA ---
         z_eff = 1.5
-        
         b_angle = get_bearing(f["lat"], f["lon"], lat_dest, lon_dest)
         f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*72)
         if len(f_radial) != 72: f_radial = [f.get("cota",0.0)]*72
@@ -431,7 +444,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         cota_terreno_medio = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
         
         if cota_terreno_medio > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
-            continue
+            decay_x *= 0.3 # Impacto contra terreno natural (retiene el 70%)
             
         H_eff = max(0.0, H_base + f.get("cota", 0.0) + f.get("altura_maq", 2.0) - cota_dest)
         
@@ -722,7 +735,6 @@ with st.sidebar:
                             
                         if st.button("➕ Asignar", key=f"btn_assign_{idx}") and m_nom:
                             props["maq"][m_nom] = m_db; st.rerun()
-                        st.write(f"Potencia Lmax: **{sumar_decibelios(props['maq']):.1f} dB**")
                     else:
                         act_actuales = props.get("actividades_polvo", ["Excavación y carga de tierras (Retro)"])
                         if isinstance(act_actuales, str): act_actuales = [act_actuales]
@@ -740,13 +752,12 @@ with st.sidebar:
                         if q_base > 0 and len(sel_medidas) > 0:
                             reduccion = (1 - (q_calc / q_base)) * 100
                             st.success(f"📉 Medidas aplicadas: Emisión reducida en un **{reduccion:.1f}%**")
-                        st.caption(f"Emisión Resultante: **{q_calc:.3f} g/s** (H_eff base={h_calc}m)")
 
                 elif tipo == "LineString":
                     if modo_visor == "🔊 Vectores de Ruido":
                         props["aten"] = st.number_input("Atenuación Muro (dB):", value=props["aten"], step=1.0, key=f"aten_{idx}")
                     else:
-                        st.caption("Pantalla física activa. (El polvo se modela en espacio libre en V1.0).")
+                        st.caption("Pantalla física activa. Reduce concentración por cortavientos (-40%).")
                 elif tipo == "Polygon":
                     props["tipo_poligono"] = st.radio("Tipo de Polígono:", ["🏠 Población / Receptor", "🏢 Edificio / Obstáculo 3D"], index=0 if "Población" in props.get("tipo_poligono", "Población") else 1, key=f"tpoly_{idx}")
                     
@@ -949,6 +960,8 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     return f"#{r:02X}{g:02X}{b:02X}"
             return "#BD2328"
         
+        cota_media_focos = sum([f.get("cota", 0.0) for f in focos_aire]) / len(focos_aire) if focos_aire else 0.0
+        
         lat_i = min_lat
         while lat_i <= max_lat:
             lon_i = min_lon
@@ -956,7 +969,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, pantallas_data, edificios_data, cota_dest=cota_media_focos)
                 
                 if conc >= 10.0:
                     conc_level = round(conc, 0)
@@ -1057,7 +1070,7 @@ for pob in poblaciones:
             color_pob = "green"
             html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({max_ruido:.1f} dB)</span></div>'
     else:
-        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=pob.get("cota", 0.0))
+        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, pantallas_data, edificios_data, cota_dest=pob.get("cota", 0.0))
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         

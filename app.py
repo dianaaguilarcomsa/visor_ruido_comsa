@@ -7,7 +7,6 @@ import zipfile
 import io
 import json
 import re
-import xml.etree.ElementTree as ET
 import pandas as pd
 import requests
 from branca.element import Template, MacroElement
@@ -108,7 +107,7 @@ def obtener_clima_actual_api(lat, lon):
     except:
         return 3.5, 270.0 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def obtener_elevaciones(lats, lons):
     try:
         url = f"https://api.open-meteo.com/v1/elevation?latitude={','.join(map(str, lats))}&longitude={','.join(map(str, lons))}"
@@ -119,13 +118,42 @@ def obtener_elevaciones(lats, lons):
 
 def generar_perfil_radial(lat, lon, radius=100):
     lats, lons = [], []
-    for angle in range(0, 360, 10):
+    for angle in range(0, 360, 10): 
         rad = math.radians(angle)
         d_lat = math.degrees(radius * math.cos(rad) / 6378137.0)
         d_lon = math.degrees(radius * math.sin(rad) / (6378137.0 * math.cos(math.radians(lat))))
         lats.append(lat + d_lat)
         lons.append(lon + d_lon)
     return obtener_elevaciones(lats, lons)
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def obtener_osm_datos(lat, lon, radius=500):
+    query = f"""
+    [out:json];
+    (
+      way["building"](around:{radius},{lat},{lon});
+      way["leisure"="park"](around:{radius},{lat},{lon});
+      way["natural"="wood"](around:{radius},{lat},{lon});
+    );
+    out geom;
+    """
+    try:
+        r = requests.post("https://overpass-api.de/api/interpreter", data={"data": query}, timeout=5)
+        data = r.json()
+        edifs, parqs = [], []
+        for element in data.get('elements', []):
+            if element['type'] == 'way':
+                c = [[geom['lon'], geom['lat']] for geom in element['geometry']]
+                if len(c) >= 3:
+                    tags = element.get('tags', {})
+                    if 'building' in tags:
+                        h = float(tags.get('height', 10.0))
+                        edifs.append({"coords": c, "altura": h, "name": tags.get('name', 'Edificio (OSM)')})
+                    else:
+                        parqs.append({"coords": c, "name": tags.get('name', 'Parque/Bosque')})
+        return edifs, parqs
+    except:
+        return [], []
 
 @st.cache_data
 def cargar_maquinas():
@@ -186,61 +214,64 @@ def distancia_haversine(lat1, lon1, lat2, lon2):
 
 def get_bearing(lat1, lon1, lat2, lon2):
     dLon = math.radians(lon2 - lon1)
-    lat1, lat2 = math.radians(lat1), math.radians(lat2)
-    y = math.sin(dLon) * math.cos(lat2)
-    x = math.cos(lat1) * math.sin(lat2) - math.sin(lat1) * math.cos(lat2) * math.cos(dLon)
+    lat1_rad, lat2_rad = math.radians(lat1), math.radians(lat2)
+    y = math.sin(dLon) * math.cos(lat2_rad)
+    x = math.cos(lat1_rad) * math.sin(lat2_rad) - math.sin(lat1_rad) * math.cos(lat2_rad) * math.cos(dLon)
     return (math.degrees(math.atan2(y, x)) + 360) % 360
 
 def parsear_kml_a_dibujos(kml_texto):
     dibujos = []
     try:
-        kml_clean = re.sub(r'\sxmlns(:\w+)?="[^"]+"', '', kml_texto)
-        kml_clean = re.sub(r'<(\w+):(\w+)', r'<\2', kml_clean)
-        kml_clean = re.sub(r'</(\w+):(\w+)', r'</\2', kml_clean)
-        
-        try:
-            root = ET.fromstring(kml_clean)
-        except ET.ParseError:
-            return []
-            
-        for pm in root.findall('.//Placemark'):
+        # Buscador RegEx agresivo: ignora namespaces y estructuras completas, va directo al dato.
+        placemarks = re.findall(r'<Placemark.*?>(.*?)</Placemark>', kml_texto, re.DOTALL | re.IGNORECASE)
+        for pm in placemarks:
             nombre = "Elemento KML"
-            name_node = pm.find('name')
-            if name_node is not None and name_node.text: nombre = name_node.text.strip()
+            nm = re.search(r'<name>(.*?)</name>', pm, re.DOTALL | re.IGNORECASE)
+            if nm: nombre = nm.group(1).strip()
             
-            pt_node = pm.find('.//Point//coordinates')
-            if pt_node is not None and pt_node.text:
-                coords_str = pt_node.text.strip().replace('\n', ' ').replace('\t', ' ')
-                parts = [p.strip() for p in coords_str.split(',') if p.strip()]
-                if len(parts) >= 2:
-                    dibujos.append({
-                        "type": "Feature", "geometry": {"type": "Point", "coordinates": [float(parts[0]), float(parts[1])]}, 
-                        "properties": {"name": nombre, "maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": [], "cota": 0.0, "altura_maq": 2.0, "h_dia": 12.0, "h_noche": 0.0, "h_total": 8.0, "perfil_radial": [0.0]*36}
-                    })
+            pt = re.search(r'<Point.*?>.*?<coordinates>\s*(.*?)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
+            if pt:
+                coords = pt.group(1).strip().replace('\n', ' ').replace('\t', ' ').split(',')
+                if len(coords) >= 2:
+                    dibujos.append({"type": "Feature", "geometry": {"type": "Point", "coordinates": [float(coords[0].strip()), float(coords[1].strip())]}, "properties": {"name": nombre}})
                     continue
                     
-            ls_node = pm.find('.//LineString//coordinates')
-            if ls_node is not None and ls_node.text:
-                coords_str = ls_node.text.strip().replace('\n', ' ').replace('\t', ' ')
-                coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str.split() if len(p.split(',')) >= 2]
-                if coords_list:
-                    dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords_list}, "properties": {"name": nombre, "aten": 15.0}})
+            ls = re.search(r'<LineString.*?>.*?<coordinates>\s*(.*?)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
+            if ls:
+                c_str = ls.group(1).strip().replace('\n', ' ').replace('\t', ' ')
+                pares = c_str.split()
+                c_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
+                if c_list:
+                    dibujos.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": c_list}, "properties": {"name": nombre}})
                     continue
                     
-            poly_node = pm.find('.//Polygon//coordinates')
-            if poly_node is not None and poly_node.text:
-                coords_str = poly_node.text.strip().replace('\n', ' ').replace('\t', ' ')
-                coords_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in coords_str.split() if len(p.split(',')) >= 2]
-                if coords_list:
-                    dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [coords_list]}, "properties": {"name": nombre, "umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0, "tipo_poligono": "🏠 Población / Receptor", "altura_edif": 10.0}})
+            poly = re.search(r'<Polygon.*?>.*?<coordinates>\s*(.*?)\s*</coordinates>', pm, re.DOTALL | re.IGNORECASE)
+            if poly:
+                c_str = poly.group(1).strip().replace('\n', ' ').replace('\t', ' ')
+                pares = c_str.split()
+                c_list = [[float(p.split(',')[0]), float(p.split(',')[1])] for p in pares if len(p.split(',')) >= 2]
+                if c_list:
+                    dibujos.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [c_list]}, "properties": {"name": nombre}})
                     
-    except Exception as e: st.error(f"Error parseando KML interno: {e}")
+    except Exception as e:
+        st.error(f"Error procesando KML: {e}")
+        
+    # Inicializar propiedades por defecto para elementos KML
+    for d in dibujos:
+        if "properties" not in d: d["properties"] = {}
+        if d["geometry"]["type"] == "Point":
+            d["properties"].update({"maq": {}, "actividades_polvo": ["Excavación y carga de tierras (Retro)"], "medidas_polvo": [], "cota": 0.0, "altura_maq": 2.0, "h_dia": 12.0, "h_noche": 0.0, "h_total": 8.0, "perfil_radial": [0.0]*36})
+        elif d["geometry"]["type"] == "LineString":
+            d["properties"].update({"aten": 15.0})
+        elif d["geometry"]["type"] == "Polygon":
+            d["properties"].update({"umbral": 65.0, "uso_nombre": "Residencial", "cota": 0.0, "tipo_poligono": "🏠 Población / Receptor", "altura_edif": 10.0})
     return dibujos
 
 @st.cache_data(show_spinner=False)
-def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, pantallas_data_json, edificios_data_json, focos_all_json, f_cota=0.0, f_altura_maq=2.0, radial_foco=None, r_earth=6378137.0):
+def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, pantallas_data_json, edificios_data_json, parques_data_json, focos_all_json, f_cota=0.0, f_altura_maq=2.0, radial_foco=None, r_earth=6378137.0):
     pantallas_data = json.loads(pantallas_data_json)
     edificios_data = json.loads(edificios_data_json)
+    parques_data = json.loads(parques_data_json)
     focos_all = json.loads(focos_all_json)
     if radial_foco is None or len(radial_foco) != 36: radial_foco = [f_cota]*36
     
@@ -250,6 +281,10 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
     
     radios_brutos = []
     
+    # Mapear polígonos previamente para acelerar
+    edif_polys = [{"poly": ShapelyPolygon(e["coords"]), "h_max": e["cota"] + e["altura"]} for e in edificios_data if len(e["coords"]) >= 3]
+    parq_polys = [ShapelyPolygon(p["coords"]) for p in parques_data if len(p["coords"]) >= 3]
+    
     for angle in range(360):
         rad = math.radians(angle)
         
@@ -258,6 +293,7 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
         w = (angle % 10) / 10.0
         cota_terreno_angulo = radial_foco[idx1] * (1.0 - w) + radial_foco[idx2] * w
         
+        # Atenuación topográfica suavizada
         dif_topo = cota_terreno_angulo - (f_cota + f_altura_maq)
         aten_topo_base = min(10.0, dif_topo * 0.75) if dif_topo > 0 else 0.0
         radio_base = calcular_radio(emision_foco, umbral_banda, aten_topo_base)
@@ -299,43 +335,48 @@ def generar_isofona_con_sombra(foco_lat, foco_lon, emision_foco, umbral_banda, p
             r_max_libre = low
             
         radio_final = r_max_libre
-        
-        # Generar rayo virtual para evaluar intersecciones precisas
         d_lon_temp = math.degrees(r_max_libre * math.cos(rad) / (r_earth * math.cos(math.radians(foco_lat))))
         d_lat_temp = math.degrees(r_max_libre * math.sin(rad) / r_earth)
-        punto_temp = Point(foco_lon + d_lon_temp, foco_lat + d_lat_temp)
-        rayo = LineString([foco_pt, punto_temp])
+        rayo = LineString([foco_pt, Point(foco_lon + d_lon_temp, foco_lat + d_lat_temp)])
         
+        # Fricción por parques (Reducción suave y orgánica)
+        for pq in parq_polys:
+            if rayo.intersects(pq):
+                radio_final *= 0.85 
+                
+        # Difracción de pantallas
         for p in pantallas_data:
             pantalla_line = LineString(p["coords"])
             if rayo.intersects(pantalla_line):
-                interseccion = rayo.intersection(pantalla_line)
-                pt_int = interseccion if interseccion.geom_type == 'Point' else interseccion.geoms[0]
-                d_muro = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
-                radio_aten = r_max_libre * (10 ** (-p["aten"] / 20))
-                if radio_aten <= d_muro: radio_final = min(radio_final, d_muro)
-                else: radio_final = min(radio_final, d_muro + (radio_aten - d_muro))
+                try:
+                    interseccion = rayo.intersection(pantalla_line)
+                    pt_int = interseccion if interseccion.geom_type == 'Point' else interseccion.geoms[0]
+                    d_muro = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
+                    radio_aten = r_max_libre * (10 ** (-p["aten"] / 20))
+                    radio_final = min(radio_final, d_muro + (radio_aten - d_muro) if radio_aten > d_muro else d_muro)
+                except: pass
                 
-        for edif in edificios_data:
-            edif_poly = ShapelyPolygon(edif["coords"])
-            if rayo.intersects(edif_poly):
-                if (edif["cota"] + edif["altura"]) > (f_cota + f_altura_maq):
+        # Difracción Edificios 3D
+        for edif in edif_polys:
+            if rayo.intersects(edif["poly"]):
+                if edif["h_max"] > (f_cota + f_altura_maq):
                     try:
-                        interseccion = rayo.intersection(edif_poly)
+                        interseccion = rayo.intersection(edif["poly"])
                         if interseccion.geom_type == 'Point': pt_int = interseccion
                         elif interseccion.geom_type == 'MultiPoint': pt_int = interseccion.geoms[0]
                         elif interseccion.geom_type == 'LineString': pt_int = Point(interseccion.coords[0])
-                        else: pt_int = edif_poly.centroid
-                    except: pt_int = edif_poly.centroid
-                    
-                    d_edif = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
-                    radio_aten = r_max_libre * (10 ** (-15.0 / 20)) 
-                    if radio_aten <= d_edif: radio_final = min(radio_final, d_edif)
-                    else: radio_final = min(radio_final, d_edif + (radio_aten - d_edif))
+                        else: pt_int = edif["poly"].centroid
+                        
+                        d_edif = distancia_haversine(foco_lat, foco_lon, pt_int.y, pt_int.x)
+                        radio_aten = r_max_libre * (10 ** (-15.0 / 20)) 
+                        radio_final = min(radio_final, d_edif + (radio_aten - d_edif) if radio_aten > d_edif else d_edif)
+                    except: pass
 
         radios_brutos.append(radio_final)
         
-    ventana = 11
+    # --- FILTRO DE DIFRACCIÓN ACÚSTICA (Suavizado de Media Móvil) ---
+    # Una ventana de 21 grados asegura que las sombras de los edificios sean redondeadas y orgánicas
+    ventana = 21 
     coords = []
     for i in range(360):
         suma_radios = 0.0
@@ -381,8 +422,12 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=0.0):
+def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, pantallas_data, edificios_data, parques_osm, cota_dest=0.0):
     concentracion = 0.0
+    pantallas_polys = [LineString(p["coords"]) for p in pantallas_data if len(p["coords"]) >= 2]
+    edif_polys = [{"poly": ShapelyPolygon(e["coords"]), "h_max": e["cota"] + e["altura"]} for e in edificios_data if len(e["coords"]) >= 3]
+    parq_polys = [ShapelyPolygon(p["coords"]) for p in parques_osm if len(p["coords"]) >= 3]
+    
     for f in focos_aire:
         Q, H_base = f["Q"], f["H"]
         if Q <= 0: continue
@@ -397,7 +442,7 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
         dx = dist * math.cos(angulo_relativo)
         dy = dist * math.sin(angulo_relativo)
         
-        # Foco de volumen
+        # Foco de Volumen Inicial para que nazca en el suelo
         sigma_y0 = 15.0 
         sigma_z0 = 5.0
         
@@ -410,20 +455,34 @@ def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento,
             sigma_y = sigma_y0 + 0.25 * abs(dx) 
             sigma_z = sigma_z0
             decay_x = math.exp(-(dx**2) / (2 * 40.0**2)) 
+            
+        rayo_polvo = LineString([(f["lon"], f["lat"]), (lon_dest, lat_dest)])
         
-        z_eff = 1.5
+        # Interacción aerodinámica con obstáculos
+        for p in pantallas_polys:
+            if rayo_polvo.intersects(p): decay_x *= 0.60
+                
+        for edif in edif_polys:
+            if rayo_polvo.intersects(edif["poly"]):
+                if edif["h_max"] > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
+                    decay_x *= 0.25
+                    
+        for pq in parq_polys:
+            if rayo_polvo.intersects(pq): decay_x *= 0.85
         
+        # Dinámica topográfica: Si la colina sube, el polvo se densifica contra ella
         f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*36)
         if len(f_radial) != 36: f_radial = [f.get("cota",0.0)]*36
-        
         idx1 = int(bearing // 10) % 36
         idx2 = (idx1 + 1) % 36
         w = (bearing % 10) / 10.0
         cota_terreno_medio = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
         
-        if cota_terreno_medio > (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0)):
-            continue
+        d_top = cota_terreno_medio - (f.get("cota", 0.0) + H_base + f.get("altura_maq", 2.0))
+        if d_top > 0:
+            decay_x *= math.exp(-d_top * 0.1) # Deposición contra el terreno
             
+        z_eff = 1.5 
         H_eff = max(0.0, H_base + f.get("cota", 0.0) + f.get("altura_maq", 2.0) - cota_dest)
         
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
@@ -461,7 +520,7 @@ def generar_kmz(focos_list, pantallas_list, poblaciones_list, isofonas_list, mod
     elif modo == "polvo":
         kml.append(f'<Placemark><name>Meteorología del Cálculo</name><description>Velocidad Viento: {viento_u:.1f} m/s\nSopla desde: {viento_dir:.0f}º\nPluma se dirige a: {(viento_dir+180)%360:.0f}º</description><Point><coordinates>{st.session_state["map_center"][1]},{st.session_state["map_center"][0]},0</coordinates></Point></Placemark>')
         if polvo_grid:
-            kml.append('<Folder><name>Malla de Dispersión PM10</name>')
+            kml.append('<Folder><name>Malla de Dispersión PM10 (RD 102/2011)</name>')
             for celda in polvo_grid:
                 kml_color = hex_to_kml_color(celda["color"], alpha="99")
                 b = celda["bounds"]
@@ -574,8 +633,7 @@ with st.sidebar:
                                                 c = d["geometry"]["coordinates"]
                                                 d["properties"]["perfil_radial"] = generar_perfil_radial(c[1], c[0], 100)
                                             elev_idx += 1
-                                except:
-                                    st.warning("No se pudo obtener la altitud automática.")
+                                except: pass
                                         
                                 st.session_state["mis_dibujos"] = dibujos_kml
                                 if dibujos_kml[0]["geometry"]["coordinates"]:
@@ -584,12 +642,12 @@ with st.sidebar:
                                     else: st.session_state["map_center"] = [c[0][1], c[0][0]] if isinstance(c[0], list) else [c[1], c[0]]
                                 st.session_state["map_version"] += 1
                                 st.rerun()
-                        else: st.warning("No se encontraron geometrías válidas. KML limpiado de espacios de nombre.")
+                        else: st.warning("No se encontraron geometrías válidas.")
                     else: st.error("Archivo vacío.")
-                except Exception as e: st.error(f"Error: {e}")
+                except Exception as e: st.error(f"Error procesando el archivo: {e}")
 
     with st.expander("🗺️ Capa de Fondo (Ámbito de Obra)", expanded=False):
-        st.caption("Sube un KML/KMZ puramente visual para ubicar la obra (no se computa como foco o pantalla).")
+        st.caption("Sube un KML/KMZ puramente visual para ubicar la obra.")
         st.markdown("**🎨 Estilo de la Capa de Fondo**")
         col_color, col_grosor = st.columns(2)
         color_fondo = col_color.color_picker("Color", "#3388ff")
@@ -754,6 +812,12 @@ with st.sidebar:
                             st.caption("Límite Diario PM10 (RD 102/2011): **50 µg/m³** (Límite normativo de protección a la salud).")
                 st.write("---")
 
+    # Integración automática de OSM
+    edificios_osm_data, parques_osm_data = [], []
+    if any(f["geometry"]["type"] == "Point" for f in st.session_state["mis_dibujos"]):
+        edif_os, parq_os = obtener_osm_datos(st.session_state["map_center"][0], st.session_state["map_center"][1], 600)
+        edificios_osm_data, parques_osm_data = edif_os, parq_os
+
     focos, pantallas_data, edificios_data, poblaciones, focos_aire = [], [], [], [], []
     for feature in st.session_state["mis_dibujos"]:
         tipo = feature["geometry"]["type"]
@@ -795,8 +859,11 @@ with st.sidebar:
             else:
                 poblaciones.append({"coords": coords[0], "name": props["name"], "umbral": props.get("umbral", 65.0), "uso_nombre": props.get("uso_nombre", "Residencial"), "cota": props.get("cota", 0.0)})
 
+    # Sumamos los edificios de OSM a los dibujados a mano
+    todos_los_edificios = edificios_data + edificios_osm_data
     pantallas_json = json.dumps(pantallas_data, default=safe_serialize)
-    edificios_json = json.dumps(edificios_data, default=safe_serialize)
+    edificios_json = json.dumps(todos_los_edificios, default=safe_serialize)
+    parques_json = json.dumps(parques_osm_data, default=safe_serialize)
     focos_json = json.dumps(focos, default=safe_serialize)
 
     if st.button("🧹 Limpiar Mapa Completo", type="primary", use_container_width=True, key="btn_limpiar_mapa_unico"):
@@ -813,7 +880,7 @@ with st.sidebar:
 col1, col2, col3 = st.columns(3)
 col1.metric("📍 Focos Activos", len(focos))
 col2.metric("〰️ Pantallas Acústicas", len(pantallas_data))
-col3.metric("⬟ Poblaciones / 🏢 Edificios", f"{len(poblaciones)} / {len(edificios_data)}")
+col3.metric("⬟ Poblaciones / 🏢 Edificios", f"{len(poblaciones)} / {len(todos_los_edificios)}")
 
 centro = st.session_state["map_center"]
 zoom = st.session_state["map_zoom"]
@@ -865,7 +932,7 @@ if modo_visor == "🔊 Vectores de Ruido":
             poligonos_banda = []
             for f in focos:
                 if f["emision"] > banda["min"]:
-                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], banda["min"], pantallas_json, edificios_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
+                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], banda["min"], pantallas_json, edificios_json, parques_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                     if len(coords) >= 3:
                         poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
                         if not poly.is_valid: poly = poly.buffer(0)
@@ -882,7 +949,7 @@ if modo_visor == "🔊 Vectores de Ruido":
             poligonos_banda = []
             for f in focos:
                 if f["emision"] > umb:
-                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umb, pantallas_json, edificios_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
+                    coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umb, pantallas_json, edificios_json, parques_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                     if len(coords) >= 3:
                         poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
                         if not poly.is_valid: poly = poly.buffer(0)
@@ -899,7 +966,7 @@ if modo_visor == "🔊 Vectores de Ruido":
         poligonos_limite = []
         for f in focos:
             if f["emision"] > umbral_referencia:
-                coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_referencia, pantallas_json, edificios_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
+                coords = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_referencia, pantallas_json, edificios_json, parques_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                 if len(coords) >= 3:
                     poly = ShapelyPolygon([(c[1], c[0]) for c in coords])
                     if not poly.is_valid: poly = poly.buffer(0)
@@ -945,7 +1012,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion)
+                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, pantallas_data, todos_los_edificios, parques_osm_data)
                 
                 if conc >= 10.0:
                     conc_level = round(conc, 0)
@@ -975,7 +1042,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                     coords_f = [(lat, lon) for lon, lat in geom.exterior.coords]
                     folium.Polygon(locations=coords_f, color=color, fill=True, fill_color=color, fill_opacity=0.45, weight=0).add_to(fg_resultados_aire)
 
-for edif in edificios_data:
+for edif in todos_los_edificios:
     folium.Polygon(locations=[[lat, lon] for lon, lat in edif["coords"]], color="#555555", fill=True, fill_color="#333333", fill_opacity=0.7, weight=2, tooltip=f"🏢 {edif['name']} (H: {edif['altura']}m)").add_to(fg_edificios)
 
 for pob in poblaciones:
@@ -998,7 +1065,6 @@ for pob in poblaciones:
                 b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
                 f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*36)
                 if len(f_radial) != 36: f_radial = [f.get("cota",0.0)]*36
-                
                 idx1 = int(b_angle // 10) % 36
                 idx2 = (idx1 + 1) % 36
                 w = (b_angle % 10) / 10.0
@@ -1011,10 +1077,14 @@ for pob in poblaciones:
                 for p in pantallas_data:
                     if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
                     
-                for edif in edificios_data:
+                for edif in todos_los_edificios:
                     if lv.intersects(ShapelyPolygon(edif["coords"])):
                         if (edif["cota"] + edif["altura"]) > (f.get("cota",0.0) + f.get("altura_maq",2.0)):
                             at_ap = max(at_ap, 15.0)
+                            
+                for pq in parques_osm_data:
+                    if lv.intersects(ShapelyPolygon(pq["coords"])):
+                        at_ap += 2.0 
                             
                 ruido_foco = f["emision"] - 20 * math.log10(dist_3d) - at_ap if dist_3d > 1 else f["emision"] - at_ap
                 r_parciales.append(ruido_foco)
@@ -1027,7 +1097,7 @@ for pob in poblaciones:
         else:
             for f in focos:
                 if f["emision"] <= 0: continue
-                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, edificios_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
+                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], umbral_pob, pantallas_json, edificios_json, parques_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
                 if len(iso_coords_limite) >= 3:
                     iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
                     if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
@@ -1041,7 +1111,7 @@ for pob in poblaciones:
             color_pob = "green"
             html = f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({max_ruido:.1f} dB)</span></div>'
     else:
-        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=pob.get("cota", 0.0))
+        polvo_centro = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, pantallas_data, todos_los_edificios, parques_osm_data, cota_dest=pob.get("cota", 0.0))
         if polvo_centro > 50.0: color_pob, html = "red", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ffcccc; font-size: 11px;">(Excede RD 102: {polvo_centro:.1f}µg)</span></div>'
         else: color_pob, html = "green", f'<div style="{css_texto} text-align: center;">{nombre}<br><span style="color: #ccffcc; font-size: 11px;">({polvo_centro:.1f} / 50 µg/m³)</span></div>'
         
@@ -1099,7 +1169,7 @@ escala_polvo_html = """
         <div><span style="display:inline-block; width:12px; height:12px; background:#FDF1E2; border:1px solid #999;"></span> 10 - 20 (Fondo Disperso)</div>
         <div><span style="display:inline-block; width:12px; height:12px; background:#F6D2B9; border:1px solid #999;"></span> 20 - 40 (Moderado)</div>
         <div><span style="display:inline-block; width:12px; height:12px; background:#ECAE93; border:1px solid #999;"></span> 40 - 50 (Alerta Preventiva)</div>
-        <div><span style="display:inline-block; width:12px; height:12px; background:#DC826C; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite RD 102/2011)</b></div>
+        <div><span style="display:inline-block; width:12px; height:12px; background:#DC826C; border:1px solid #999;"></span> <b>50 - 100 (Incumple Límite)</b></div>
         <div><span style="display:inline-block; width:12px; height:12px; background:#BD2328; border:1px solid #999;"></span> > 100 (Impacto Crítico a Salud)</div>
     </div>
 </div>
@@ -1107,18 +1177,13 @@ escala_polvo_html = """
 
 columna_eea_html = """
 <div style="flex: 1; min-width: 200px; padding-left: 5px;">
-    <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA)</div>
+    <div style="font-weight: bold; margin-bottom: 5px; text-align: center; border-bottom: 1px solid #eee; padding-bottom: 3px;">Ambiental (EEA) & Elementos</div>
     <div style="display: flex; flex-wrap: wrap; font-size: 11px;">
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px); border:1px solid #8888FF; margin-right: 5px;"></span> LIC/ZEC</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #FF8888; margin-right: 5px;"></span> ZEPA</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:repeating-linear-gradient(-45deg, transparent, transparent 2px, #8888FF 2px, #8888FF 3px), repeating-linear-gradient(45deg, transparent, transparent 2px, #FF8888 2px, #FF8888 3px); border:1px solid #333; margin-right: 5px;"></span> LIC+ZEPA</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#7CFC00; border:1px solid #999; margin-right: 5px;"></span> Res. Estricta</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#808000; border:1px solid #999; margin-right: 5px;"></span> Silvestre</div>
         <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#006400; border:1px solid #999; margin-right: 5px;"></span> P. Nacional</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFFACD; border:1px solid #999; margin-right: 5px;"></span> Mon. Natural</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FFA500; border:1px solid #999; margin-right: 5px;"></span> Gest. Hábitat</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#FF69B4; border:1px solid #999; margin-right: 5px;"></span> Paisaje Prot.</div>
-        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#0000FF; border:1px solid #999; margin-right: 5px;"></span> Uso Sost.</div>
+        <div style="width: 50%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:#333333; opacity:0.7; border:1px solid #555; margin-right: 5px;"></span> Edificios 3D</div>
+        <div style="width: 100%; margin-bottom: 2px; display: flex; align-items: center;"><span style="display:inline-block; width:12px; height:12px; background:rgba(127,255,0,0.3); border:2px solid #00FF00; margin-right: 5px;"></span> Población Sensible</div>
     </div>
 </div>
 """
@@ -1163,18 +1228,12 @@ if map_output and map_output.get("last_active_drawing"):
         
         try:
             if tipo == "Point":
-                elev = obtener_elevaciones([coords[1]], [coords[0]])[0]
-                nuevo_dibujo["properties"]["cota"] = elev
-                nuevo_dibujo["properties"]["perfil_radial"] = generar_perfil_radial(coords[1], coords[0], 100)
                 st.session_state["map_center"] = [coords[1], coords[0]]
             elif tipo == "Polygon" and coords and coords[0]:
-                elev = obtener_elevaciones([coords[0][0][1]], [coords[0][0][0]])[0]
-                nuevo_dibujo["properties"]["cota"] = elev
                 st.session_state["map_center"] = [coords[0][0][1], coords[0][0][0]]
             elif tipo == "LineString" and coords:
                 st.session_state["map_center"] = [coords[0][1], coords[0][0]]
-        except Exception:
-            pass
+        except: pass
             
         st.session_state["mis_dibujos"].append(nuevo_dibujo)
         st.session_state["map_version"] += 1
@@ -1197,7 +1256,7 @@ with st.sidebar:
                 informe_ruido += "1. MARCO LEGAL Y METODOLOGÍA\n"
                 informe_ruido += "-"*55 + "\n"
                 informe_ruido += "Legislación de referencia: Ley 37/2003, del Ruido y Real Decreto 1367/2007.\n"
-                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores (ISO 9613-2) evaluando atenuación por divergencia geométrica, y difracción topográfica por barreras y edificios interpuestos.\n\n"
+                informe_ruido += "Metodología de cálculo: Propagación sonora en exteriores (ISO 9613-2) evaluando atenuación por divergencia geométrica, fricción por masa forestal y difracción topográfica por barreras y edificios interpuestos (Fórmula de Maekawa).\n\n"
                 
                 informe_ruido += "2. INVENTARIO DE FOCOS SONOROS (MAQUINARIA)\n"
                 informe_ruido += "-"*55 + "\n"
@@ -1217,9 +1276,9 @@ with st.sidebar:
                 
                 informe_ruido += "3. MEDIDAS CORRECTORAS Y OBSTÁCULOS FÍSICOS\n"
                 informe_ruido += "-"*55 + "\n"
-                if pantallas_data or edificios_data:
+                if pantallas_data or todos_los_edificios:
                     for p in pantallas_data: informe_ruido += f" - Barrera '{p['name']}': Atenuación configurada de {p['aten']} dB(A)\n"
-                    for e in edificios_data: informe_ruido += f" - Edificio 3D '{e['name']}': Altura {e['altura']}m (Bloqueo visual difractado -15 dB)\n"
+                    informe_ruido += f" - Modelado Topográfico 3D: Se han analizado {len(todos_los_edificios)} edificios (Difracción Maekawa).\n"
                 else: 
                     informe_ruido += " No se han dispuesto pantallas o edificios 3D para esta simulación.\n"
                 
@@ -1230,51 +1289,50 @@ with st.sidebar:
                         poly_coords = pob["coords"]
                         c_lon, c_lat = ShapelyPolygon(poly_coords).centroid.x, ShapelyPolygon(poly_coords).centroid.y
                         max_ruido = 0
+                        
+                        pantallas_polys = [{"line": LineString(p["coords"]), "aten": p["aten"]} for p in pantallas_data if len(p["coords"]) >= 2]
+                        edif_polys = [{"poly": ShapelyPolygon(e["coords"]), "h_max": e["cota"] + e["altura"]} for e in todos_los_edificios if len(e["coords"]) >= 3]
+                        parq_polys = [ShapelyPolygon(p["coords"]) for p in parques_osm_data if len(p["coords"]) >= 3]
+                        
                         puntos_eval = [Point(c_lon, c_lat)] + [Point(c[0], c[1]) for c in poly_coords]
                         for pt in puntos_eval:
                             r_parciales = []
                             for f in focos:
                                 if f["emision"] <= 0: continue
-                                dist_2d = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
-                                dist_3d = math.sqrt(dist_2d**2 + ((f.get("cota",0.0) + f.get("altura_maq",2.0)) - pob.get("cota", 0.0))**2)
+                                d_2d = distancia_haversine(f["coords"][1], f["coords"][0], pt.y, pt.x)
+                                h_s, h_r = f["cota"] + f["altura_maq"], pob["cota"] + 1.5
+                                d_3d = math.sqrt(d_2d**2 + (h_r - h_s)**2)
                                 
-                                b_angle = get_bearing(f["coords"][1], f["coords"][0], pt.y, pt.x)
-                                f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*36)
-                                if len(f_radial) != 36: f_radial = [f.get("cota",0.0)]*36
-                                idx1 = int(b_angle // 10) % 36
-                                idx2 = (idx1 + 1) % 36
-                                w = (b_angle % 10) / 10.0
-                                cota_terr = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
+                                atenuacion = 0.0
+                                rayo = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
                                 
-                                d_top = cota_terr - (f.get("cota", 0.0) + f.get("altura_maq", 2.0))
-                                at_ap = min(10.0, d_top * 0.75) if d_top > 0 else 0.0
-                                
-                                lv = LineString([(f["coords"][0], f["coords"][1]), (pt.x, pt.y)])
-                                for p in pantallas_data:
-                                    if lv.intersects(LineString(p["coords"])): at_ap = max(at_ap, p["aten"])
-                                for edif in edificios_data:
-                                    if lv.intersects(ShapelyPolygon(edif["coords"])):
-                                        if (edif["cota"] + edif["altura"]) > (f.get("cota",0.0) + f.get("altura_maq",2.0)):
-                                            at_ap = max(at_ap, 15.0)
+                                for p in parq_polys:
+                                    if rayo.intersects(p):
+                                        try: atenuacion += min((rayo.intersection(p).length * 111320.0) * 0.1, 10.0)
+                                        except: pass
+                                        
+                                for pant in pantallas_polys:
+                                    if rayo.intersects(pant["line"]): atenuacion = max(atenuacion, pant["aten"])
+                                    
+                                for ed in edif_polys:
+                                    if rayo.intersects(ed["poly"]) and ed["h_max"] > h_s:
+                                        try:
+                                            pt_int = rayo.intersection(ed["poly"])
+                                            pt_int = pt_int if pt_int.geom_type == 'Point' else pt_int.centroid
+                                            d_so = distancia_haversine(f["coords"][1], f["coords"][0], pt_int.y, pt_int.x)
+                                            d_or = distancia_haversine(pt_int.y, pt_int.x, pt.y, pt.x)
+                                            d_so_3d = math.sqrt(d_so**2 + (ed["h_max"] - h_s)**2)
+                                            d_or_3d = math.sqrt(d_or**2 + (ed["h_max"] - h_r)**2)
+                                            dif_camino = (d_so_3d + d_or_3d) - d_3d
+                                            if dif_camino > 0: atenuacion = max(atenuacion, min(10 * math.log10(3 + 20 * (2 * dif_camino / 0.68)), 20.0))
+                                        except: pass
                                             
-                                ruido_foco = f["emision"] - 20 * math.log10(dist_3d) - at_ap if dist_3d > 1 else f["emision"] - at_ap
+                                ruido_foco = f["emision"] - 20 * math.log10(d_3d) - atenuacion if d_3d > 1 else f["emision"] - atenuacion
                                 r_parciales.append(ruido_foco)
                             r_tot = 10 * math.log10(sum(10 ** (r / 10) for r in r_parciales)) if r_parciales else 0
                             if r_tot > max_ruido: max_ruido = r_tot
-                            
-                        supera_umbral = False
-                        if max_ruido > pob['umbral']: supera_umbral = True
-                        else:
-                            for f in focos:
-                                if f["emision"] <= 0: continue
-                                iso_coords_limite = generar_isofona_con_sombra(f["coords"][1], f["coords"][0], f["emision"], pob['umbral'], pantallas_json, edificios_json, focos_json, f["cota"], f["altura_maq"], f["perfil_radial"])
-                                if len(iso_coords_limite) >= 3:
-                                    iso_poly = ShapelyPolygon([(lon, lat) for lon, lat in iso_coords_limite])
-                                    if not iso_poly.is_valid: iso_poly = iso_poly.buffer(0)
-                                    if ShapelyPolygon(poly_coords).intersects(iso_poly): 
-                                        supera_umbral = True; break
 
-                        estado = "INCUMPLE (Supera límite legal)" if supera_umbral else "CUMPLE"
+                        estado = "INCUMPLE (Supera límite legal)" if max_ruido > pob['umbral'] else "CUMPLE"
                         informe_ruido += f" - Receptor Analizado: {pob['name']}\n"
                         informe_ruido += f"   * Uso del Suelo: {pob['uso_nombre']} (Límite Legal: {pob['umbral']} dB)\n"
                         informe_ruido += f"   * Ruido Estimado en Fachada/Límite: {max_ruido:.1f} dB(A)\n"
@@ -1305,7 +1363,7 @@ with st.sidebar:
                 informe_txt += "-"*55 + "\n"
                 informe_txt += "Legislación aplicable: Ley 34/2007 de Calidad del Aire y Protección de la Atmósfera, y RD 102/2011.\n"
                 informe_txt += "Modelo matemático: Modelo Gaussiano de dispersión en estado estacionario (basado en formulación AUSTAL2000).\n"
-                informe_txt += "Evaluación térmica y mecánica: Los cálculos evalúan el transporte del contaminante por advección, difusión transversal y turbulencias mecánicas. Se consideran Focos de Área/Volumen para simular el bulbo difuso, dispersión posterior e interacciones orográficas.\n\n"
+                informe_txt += "Evaluación térmica y mecánica: Los cálculos evalúan el transporte del contaminante por advección, difusión transversal y turbulencias mecánicas. Se consideran Focos de Volumen (Nube base) para simular el inicio de emisión, y el cruce orográfico con edificios (estela) y parques (fricción).\n\n"
                 
                 informe_txt += "3. INVENTARIO DE FOCOS Y MEDIDAS CORRECTORAS APLICADAS\n"
                 informe_txt += "-"*55 + "\n"

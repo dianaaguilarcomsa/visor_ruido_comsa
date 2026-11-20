@@ -387,13 +387,13 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     aplica_captador = any("captadores" in m for m in medidas)
     aplica_lavarruedas = any("Lavado" in m for m in medidas)
 
-   for act in actividades:
+    for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
             if aplica_riego: q = q * datos["red_humedad"]
             if "Tránsito" in act:
-                if aplica_velocidad: q = q * 0.60 
+                if aplica_velocidad: q = q * 0.60
                 if aplica_lavarruedas and "públicas" in act: q = q * 0.20
             if "Perforación" in act and aplica_captador: q = q * 0.15
         elif datos["metodo"] == "formula_caida":
@@ -401,7 +401,7 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
             k = datos["k"]
             q = 1.5 * k * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
             if "Descarga" in act and aplica_tapado: q = q * 0.70
-            
+
         h = datos["H"]
         q_total += q
         h_max = max(h_max, h)

@@ -387,7 +387,7 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
     aplica_captador = any("captadores" in m for m in medidas)
     aplica_lavarruedas = any("Lavado" in m for m in medidas)
 
-    for act in actividades:
+   for act in actividades:
         datos = actividades_polvo.get(act, actividades_polvo["Excavación y carga de tierras (Retro)"])
         if datos["metodo"] == "factor_fijo":
             q = datos["base_g_s"]
@@ -396,10 +396,9 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
                 if aplica_velocidad: q = q * 0.60 
                 if aplica_lavarruedas and "públicas" in act: q = q * 0.20
             if "Perforación" in act and aplica_captador: q = q * 0.15
-      elif datos["metodo"] == "formula_caida":
+        elif datos["metodo"] == "formula_caida":
             M = datos["M_humedo"] if aplica_riego else datos["M_seco"]
             k = datos["k"]
-            # Escala ajustada a g/s para que las descargas sean comparables a los demás focos de obra
             q = 1.5 * k * ((max(u_viento, 0.5) / 2.2)**1.3) / ((M / 2.0)**1.4)
             if "Descarga" in act and aplica_tapado: q = q * 0.70
             

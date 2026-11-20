@@ -956,7 +956,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
         min_lon = min(f["lon"] for f in focos_aire) - margen_lon
         max_lon = max(f["lon"] for f in focos_aire) + margen_lon
         
-       step_lat = 0.00035
+        step_lat = 0.00035
         step_lon = 0.00045
         
         def get_color_for_conc(c):

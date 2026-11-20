@@ -948,16 +948,16 @@ if modo_visor == "🔊 Vectores de Ruido":
 elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
     if focos_aire:
         max_q = max([f["Q"] for f in focos_aire] + [0.1])
-        margen_lat = 0.015 + (max_q * 0.015) 
-        margen_lon = 0.020 + (max_q * 0.015)
-        
+        margen_lat = 0.008 + min(max_q * 0.006, 0.015)
+        margen_lon = 0.010 + min(max_q * 0.008, 0.020)
+            
         min_lat = min(f["lat"] for f in focos_aire) - margen_lat
         max_lat = max(f["lat"] for f in focos_aire) + margen_lat
         min_lon = min(f["lon"] for f in focos_aire) - margen_lon
         max_lon = max(f["lon"] for f in focos_aire) + margen_lon
-        
-        step_lat = 0.00035
-        step_lon = 0.00045
+            
+        step_lat = 0.00018
+        step_lon = 0.00022
         
         def get_color_for_conc(c):
             stops = [(10.0, (253, 241, 226)), (20.0, (246, 210, 185)), (40.0, (236, 174, 147)), (50.0, (220, 130, 108)), (100.0, (189, 35, 40))]

@@ -407,51 +407,49 @@ def calcular_emision_polvo_lista(actividades, medidas, u_viento):
         h_max = max(h_max, h)
     return q_total, h_max
 
-def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=0.0):
+def calcular_concentracion_total_punto(lat_dest, lon_dest, focos_aire, u_viento, dir_viento_desde, cota_dest=None):
     concentracion = 0.0
     for f in focos_aire:
         Q, H_base = f["Q"], f["H"]
-        if Q <= 0: continue
-        
+        if Q <= 0:
+            continue
+
         dist = distancia_haversine(f["lat"], f["lon"], lat_dest, lon_dest)
-        if dist < 1.0 or dist > 10000.0: continue 
-        
+        if dist < 1.0 or dist > 10000.0:
+            continue
+
         bearing = get_bearing(f["lat"], f["lon"], lat_dest, lon_dest)
         dir_pluma = (dir_viento_desde + 180) % 360
         angulo_relativo = math.radians(bearing - dir_pluma)
-        
+
         dx = dist * math.cos(angulo_relativo)
         dy = dist * math.sin(angulo_relativo)
-        
-        sigma_y0 = 15.0 
+
+        sigma_y0 = 15.0
         sigma_z0 = 5.0
-        
-        if dx > 0: 
-            sigma_y = sigma_y0 + 0.35 * dx * (1 + 0.0001 * dx)**(-0.5)
-            sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx)**(-0.5)
+
+        if dx > 0:
+            sigma_y = sigma_y0 + 0.35 * dx * (1 + 0.0001 * dx) ** (-0.5)
+            sigma_z = sigma_z0 + 0.08 * dx * (1 + 0.0015 * dx) ** (-0.5)
             decay_x = 1.0
-        else: 
-            if dx < -150: continue 
-            sigma_y = sigma_y0 + 0.25 * abs(dx) 
+        else:
+            if dx < -150:
+                continue
+            sigma_y = sigma_y0 + 0.25 * abs(dx)
             sigma_z = sigma_z0
-            decay_x = math.exp(-(dx**2) / (2 * 40.0**2)) 
-        
+            decay_x = math.exp(-(dx**2) / (2 * 40.0**2))
+
         z_eff = 1.5
-        
-        f_radial = f.get("perfil_radial", [f.get("cota",0.0)]*36)
-        if len(f_radial) != 36: f_radial = [f.get("cota",0.0)]*36
-        
-        idx1 = int(bearing // 10) % 36
-        idx2 = (idx1 + 1) % 36
-        w = (bearing % 10) / 10.0
-        cota_terreno_medio = f_radial[idx1] * (1 - w) + f_radial[idx2] * w
-        
-        H_eff = max(0.0, H_base + f.get("cota", 0.0) + f.get("altura_maq", 2.0) - cota_dest)
-        
+        cota_foco = f.get("cota", 0.0)
+        cota_ref = cota_foco if cota_dest is None else cota_dest
+        H_eff = max(0.5, H_base + f.get("altura_maq", 2.0) + (cota_foco - cota_ref))
+
         term_central = Q / (2 * math.pi * max(u_viento, 0.5) * sigma_y * sigma_z)
         disp_horiz = math.exp(-(dy**2) / (2 * sigma_y**2))
-        disp_vert = math.exp(-((z_eff - H_eff)**2) / (2 * sigma_z**2)) + math.exp(-((z_eff + H_eff)**2) / (2 * sigma_z**2))
-        
+        disp_vert = math.exp(-((z_eff - H_eff) ** 2) / (2 * sigma_z**2)) + math.exp(
+            -((z_eff + H_eff) ** 2) / (2 * sigma_z**2)
+        )
+
         concentracion += (term_central * disp_horiz * disp_vert * decay_x) * 1000000
     return concentracion
 
@@ -958,8 +956,8 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
         min_lon = min(f["lon"] for f in focos_aire) - margen_lon
         max_lon = max(f["lon"] for f in focos_aire) + margen_lon
         
-        step_lat = 0.00015
-        step_lon = 0.00020
+       step_lat = 0.00035
+        step_lon = 0.00045
         
         def get_color_for_conc(c):
             stops = [(10.0, (253, 241, 226)), (20.0, (246, 210, 185)), (40.0, (236, 174, 147)), (50.0, (220, 130, 108)), (100.0, (189, 35, 40))]
@@ -981,7 +979,7 @@ elif modo_visor == "💨 Calidad del Aire (Polvo PM10)":
                 c_lat = lat_i + step_lat/2
                 c_lon = lon_i + step_lon/2
                 
-                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=0.0)
+                conc = calcular_concentracion_total_punto(c_lat, c_lon, focos_aire, viento_velocidad, viento_direccion, cota_dest=None)
                 
                 if conc >= 10.0:
                     conc_level = round(conc, 0)
@@ -1200,7 +1198,8 @@ leyenda_macro = MacroElement()
 leyenda_macro._template = Template(f"{{% macro html(this, kwargs) %}}\n{leyendas_html}\n{{% endmacro %}}")
 m.get_root().add_child(leyenda_macro)
 
-map_key_actual = f"visor_mapa_{st.session_state.get('map_version', 0)}"
+modo_slug = "ruido" if modo_visor == "🔊 Vectores de Ruido" else "polvo"
+map_key_actual = f"visor_mapa_{modo_slug}_{st.session_state.get('map_version', 0)}"
 estilos_capas = "<style>.leaflet-control-layers-expanded { padding: 6px 10px !important; } .leaflet-control-layers label { font-size: 12px !important; line-height: 1.2 !important; margin-bottom: 2px !important; } .leaflet-control-layers-selector { margin-top: 2px !important; margin-right: 5px !important; } .leaflet-control-layers-separator { margin: 4px 0 !important; }</style>"
 m.get_root().header.add_child(folium.Element(estilos_capas))
 
